@@ -1,0 +1,14 @@
+DROP TABLE IF EXISTS order_items;
+DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS items;
+DROP TABLE IF EXISTS categories;
+DROP TABLE IF EXISTS menus;
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS merchants;
+
+DROP TYPE IF EXISTS order_status;
+DROP TYPE IF EXISTS item_availability;
+DROP TYPE IF EXISTS item_status;
+DROP TYPE IF EXISTS category_status;
+DROP TYPE IF EXISTS menu_status;
+DROP TYPE IF EXISTS merchant_status;

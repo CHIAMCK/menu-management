@@ -50,7 +50,7 @@ CREATE TABLE categories (
     updated_at TIMESTAMPTZ      NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_categories_menu_id_status ON categories (menu_id, status);
+CREATE INDEX idx_categories_menu_id_created_at ON categories (menu_id, created_at);
 
 CREATE TABLE items (
     id           BIGSERIAL PRIMARY KEY,
@@ -64,8 +64,8 @@ CREATE TABLE items (
     updated_at   TIMESTAMPTZ       NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_items_category_id_status ON items (category_id, status);
-CREATE INDEX idx_items_merchant_id_status ON items (merchant_id, status);
+CREATE INDEX idx_items_category_id_created_at ON items (category_id, created_at);
+CREATE INDEX idx_items_merchant_id ON items (merchant_id);
 
 CREATE TABLE orders (
     id           BIGSERIAL PRIMARY KEY,
@@ -77,8 +77,8 @@ CREATE TABLE orders (
     updated_at   TIMESTAMPTZ    NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_orders_user_id_created_at ON orders (user_id, created_at DESC);
-CREATE INDEX idx_orders_merchant_id_status ON orders (merchant_id, status);
+CREATE INDEX idx_orders_user_id ON orders (user_id);
+CREATE INDEX idx_orders_merchant_id ON orders (merchant_id);
 
 CREATE TABLE order_items (
     id         BIGSERIAL PRIMARY KEY,

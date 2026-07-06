@@ -36,7 +36,55 @@ order (1) ──< order_items (many) >── items (many)
 
 Migrations live in `internal/db/migrations/` and run automatically on startup.
 
-## Quick Start
+`000002_seed_data.up.sql` loads mock merchants, users, menus, categories, items, and orders.
+
+**Merchants**
+| ID | Name | Status |
+|----|------|--------|
+| 1 | Joe's Pizza | ACTIVE |
+| 2 | Cafe Bloom | ACTIVE |
+| 3 | Sushi Zen | INACTIVE |
+
+**Users:** Alice, Bob, Carol
+
+**Menus:** Joe's Pizza has an active "Main Menu" + inactive "Winter Specials"; Cafe Bloom has "All Day Menu"
+
+**Orders:** 3 sample orders across merchants (COMPLETED, PENDING, CONFIRMED)
+
+```bash
+curl "http://localhost:8080/v1/menu?merchant_id=1"
+curl "http://localhost:8080/v1/menu?merchant_id=2"
+```
+
+To reset and re-apply migrations: `docker compose down -v && docker compose up --build`
+
+## Quick Start (Docker)
+
+```bash
+docker compose up --build
+```
+
+- App: http://localhost:8080
+- PostgreSQL: `localhost:5432` (user `postgres`, password `postgres`, db `menu_management`)
+
+```bash
+curl http://localhost:8080/
+curl "http://localhost:8080/v1/menu?merchant_id=1"
+```
+
+Stop and remove containers:
+
+```bash
+docker compose down
+```
+
+Remove the database volume as well:
+
+```bash
+docker compose down -v
+```
+
+## Quick Start (Local)
 
 **1. Start PostgreSQL** (example with Docker):
 
@@ -63,9 +111,11 @@ The server starts on `http://localhost:8080` (override with `PORT` env var).
 | Method | Path | Description |
 |--------|------|-------------|
 | GET    | `/`  | Hello World |
+| GET    | `/v1/menu?merchant_id={id}` | Active menu for a merchant |
 
 ```bash
 curl http://localhost:8080/
+curl "http://localhost:8080/v1/menu?merchant_id=1"
 ```
 
 ## Project Structure
@@ -73,12 +123,17 @@ curl http://localhost:8080/
 ```
 .
 ├── main.go
+├── Dockerfile
+├── docker-compose.yml
 ├── internal/
 │   ├── db/
 │   │   ├── migrations/   # SQL schema migrations
 │   │   ├── postgres.go   # Connection pool
 │   │   └── migrate.go    # Migration runner
 │   ├── models/           # Domain structs matching DB tables
+│   ├── repository/       # Data access layer
+│   ├── service/          # Business logic layer
+│   ├── handlers/         # HTTP handlers
 │   └── routes/
 └── README.md
 ```

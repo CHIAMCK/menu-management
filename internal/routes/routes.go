@@ -5,6 +5,10 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"menu-management/internal/handlers"
+	"menu-management/internal/repository"
+	"menu-management/internal/service"
 )
 
 func Setup(db *sql.DB) *gin.Engine {
@@ -14,7 +18,14 @@ func Setup(db *sql.DB) *gin.Engine {
 		c.String(http.StatusOK, "Hello World")
 	})
 
-	_ = db
+	menuRepo := repository.NewMenuRepository(db)
+	menuService := service.NewMenuService(menuRepo)
+	menuHandler := handlers.NewMenuHandler(menuService)
+
+	v1 := r.Group("/v1")
+	{
+		v1.GET("/menu", menuHandler.GetActiveMenu)
+	}
 
 	return r
 }

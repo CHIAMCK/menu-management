@@ -14,7 +14,7 @@ type CreateOrderItemRequest struct {
 }
 
 type OrderDetailResponse struct {
-	ID          int64               `json:"id"`
+	OrderID     int64               `json:"order_id"`
 	UserID      int64               `json:"user_id"`
 	MerchantID  int64               `json:"merchant_id"`
 	Status      string              `json:"status"`
@@ -24,8 +24,11 @@ type OrderDetailResponse struct {
 	Items       []OrderItemResponse `json:"items"`
 }
 
+type UpdateOrderStatusRequest struct {
+	Status string `json:"status" binding:"required,oneof=RECEIVED PREPARING READY COMPLETED"`
+}
+
 type OrderItemResponse struct {
-	ID        int64   `json:"id"`
 	ItemID    int64   `json:"item_id"`
 	Name      string  `json:"name"`
 	Quantity  int     `json:"quantity"`

@@ -68,7 +68,6 @@ func toMenuResponse(menu models.Menu, categories []models.Category, items []mode
 			ID:           item.ID,
 			Name:         item.Name,
 			Price:        item.Price,
-			Status:       string(item.Status),
 			Availability: string(item.Availability),
 		})
 	}
@@ -76,10 +75,9 @@ func toMenuResponse(menu models.Menu, categories []models.Category, items []mode
 	categoryResponses := make([]dto.CategoryResponse, 0, len(categories))
 	for _, category := range categories {
 		categoryResponses = append(categoryResponses, dto.CategoryResponse{
-			ID:     category.ID,
-			Name:   category.Name,
-			Status: string(category.Status),
-			Items:  itemsByCategory[category.ID],
+			ID:    category.ID,
+			Name:  category.Name,
+			Items: itemsByCategory[category.ID],
 		})
 	}
 
@@ -87,7 +85,6 @@ func toMenuResponse(menu models.Menu, categories []models.Category, items []mode
 		MenuID:     menu.ID,
 		MenuName:   menu.Name,
 		MerchantID: menu.MerchantID,
-		Status:     string(menu.Status),
 		Categories: categoryResponses,
 	}
 }

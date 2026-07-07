@@ -13,5 +13,7 @@ var (
 	ErrInvalidOrderRequest      = errors.New("invalid order request")
 	ErrDuplicateOrderItem       = errors.New("duplicate order item")
 	ErrItemUnavailable          = errors.New("item unavailable")
-	ErrItemMerchantMismatch     = errors.New("item merchant mismatch")
+	ErrItemMerchantMismatch        = errors.New("item merchant mismatch")
+	ErrInvalidOrderStatus          = errors.New("invalid order status")
+	ErrInvalidOrderStatusTransition = errors.New("invalid order status transition")
 )

@@ -37,6 +37,7 @@ func Setup(db *sql.DB) *gin.Engine {
 		v1.PATCH("/menu/items/:id", itemHandler.UpdateItemAvailability)
 		v1.POST("/orders", orderHandler.CreateOrder)
 		v1.GET("/orders/:id", orderHandler.GetOrder)
+		v1.PATCH("/orders/:id/status", orderHandler.UpdateOrderStatus)
 	}
 
 	return r

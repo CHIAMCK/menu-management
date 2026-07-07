@@ -26,6 +26,12 @@ type mockOrderRepository struct {
 	createInput repository.CreateOrderInput
 	createID    int64
 	createErr   error
+	updateInput struct {
+		id     int64
+		status models.OrderStatus
+	}
+	updatedOrder models.Order
+	updateErr    error
 }
 
 func (m *mockOrderRepository) FindOrderByID(_ context.Context, id int64) (models.Order, error) {
@@ -37,7 +43,7 @@ func (m *mockOrderRepository) FindOrderByID(_ context.Context, id int64) (models
 			ID:          m.createID,
 			UserID:      m.createInput.UserID,
 			MerchantID:  m.createInput.MerchantID,
-			Status:      models.OrderStatusPending,
+			Status:      models.OrderStatusReceived,
 			TotalAmount: m.createInput.TotalAmount,
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
@@ -78,6 +84,20 @@ func (m *mockOrderRepository) CreateOrder(_ context.Context, input repository.Cr
 		m.createID = 99
 	}
 	return m.createID, nil
+}
+
+func (m *mockOrderRepository) UpdateOrderStatus(_ context.Context, id int64, status models.OrderStatus) (models.Order, error) {
+	m.updateInput.id = id
+	m.updateInput.status = status
+	if m.updateErr != nil {
+		return models.Order{}, m.updateErr
+	}
+	if m.updatedOrder.ID != 0 {
+		return m.updatedOrder, nil
+	}
+	order := m.order
+	order.Status = status
+	return order, nil
 }
 
 type mockItemRepository struct {
@@ -125,6 +145,7 @@ func setupOrderRouter(orderRepo *mockOrderRepository, itemRepo *mockItemReposito
 	r := gin.New()
 	r.GET("/orders/:id", handler.GetOrder)
 	r.POST("/orders", handler.CreateOrder)
+	r.PATCH("/orders/:id/status", handler.UpdateOrderStatus)
 	return r
 }
 
@@ -218,7 +239,7 @@ func TestGetOrder_Success(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	if got.ID != 1 || got.Status != "COMPLETED" || got.TotalAmount != 31.97 {
+	if got.OrderID != 1 || got.Status != "COMPLETED" || got.TotalAmount != 31.97 {
 		t.Fatalf("unexpected order: %+v", got)
 	}
 	if len(got.Items) != 1 || got.Items[0].Name != "Margherita Pizza" {
@@ -250,7 +271,7 @@ func TestCreateOrder_Success(t *testing.T) {
 	}
 
 	wantTotal := 12.99*2 + 5.99
-	if got.ID != 99 || got.Status != "PENDING" || got.TotalAmount != wantTotal {
+	if got.OrderID != 99 || got.Status != "RECEIVED" || got.TotalAmount != wantTotal {
 		t.Fatalf("unexpected order: %+v", got)
 	}
 }
@@ -301,5 +322,105 @@ func TestCreateOrder_ItemUnavailable(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestUpdateOrderStatus_InvalidID(t *testing.T) {
+	r := setupOrderRouter(&mockOrderRepository{}, &mockItemRepository{})
+
+	body := `{"status":"PREPARING"}`
+	req := httptest.NewRequest(http.MethodPatch, "/orders/abc/status", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestUpdateOrderStatus_InvalidBody(t *testing.T) {
+	r := setupOrderRouter(&mockOrderRepository{}, &mockItemRepository{})
+
+	req := httptest.NewRequest(http.MethodPatch, "/orders/1/status", bytes.NewBufferString(`{"status":"SHIPPED"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestUpdateOrderStatus_InvalidTransition(t *testing.T) {
+	r := setupOrderRouter(&mockOrderRepository{
+		order: models.Order{ID: 1, Status: models.OrderStatusReceived},
+	}, &mockItemRepository{})
+
+	body := `{"status":"READY"}`
+	req := httptest.NewRequest(http.MethodPatch, "/orders/1/status", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+}
+
+func TestUpdateOrderStatus_NotFound(t *testing.T) {
+	r := setupOrderRouter(&mockOrderRepository{
+		orderErr: repository.ErrNotFound,
+	}, &mockItemRepository{})
+
+	body := `{"status":"PREPARING"}`
+	req := httptest.NewRequest(http.MethodPatch, "/orders/99/status", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func TestUpdateOrderStatus_Success(t *testing.T) {
+	r := setupOrderRouter(&mockOrderRepository{
+		order: models.Order{
+			ID:          2,
+			UserID:      2,
+			MerchantID:  1,
+			Status:      models.OrderStatusReceived,
+			TotalAmount: 14.99,
+		},
+		updatedOrder: models.Order{
+			ID:          2,
+			UserID:      2,
+			MerchantID:  1,
+			Status:      models.OrderStatusPreparing,
+			TotalAmount: 14.99,
+		},
+		items: []repository.OrderItemWithItem{
+			{ID: 3, ItemID: 2, Name: "Pepperoni Pizza", Quantity: 1, UnitPrice: 14.99},
+		},
+	}, &mockItemRepository{})
+
+	body := `{"status":"PREPARING"}`
+	req := httptest.NewRequest(http.MethodPatch, "/orders/2/status", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var got dto.OrderDetailResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if got.OrderID != 2 || got.Status != "PREPARING" {
+		t.Fatalf("unexpected order: %+v", got)
 	}
 }

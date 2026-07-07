@@ -21,6 +21,12 @@ type mockOrderRepository struct {
 	createInput repository.CreateOrderInput
 	createID    int64
 	createErr   error
+	updateInput struct {
+		id     int64
+		status models.OrderStatus
+	}
+	updatedOrder models.Order
+	updateErr    error
 }
 
 func (m *mockOrderRepository) FindOrderByID(_ context.Context, id int64) (models.Order, error) {
@@ -33,7 +39,7 @@ func (m *mockOrderRepository) FindOrderByID(_ context.Context, id int64) (models
 			ID:          m.createID,
 			UserID:      m.createInput.UserID,
 			MerchantID:  m.createInput.MerchantID,
-			Status:      models.OrderStatusPending,
+			Status:      models.OrderStatusReceived,
 			TotalAmount: m.createInput.TotalAmount,
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
@@ -75,6 +81,20 @@ func (m *mockOrderRepository) CreateOrder(_ context.Context, input repository.Cr
 		m.createID = 99
 	}
 	return m.createID, nil
+}
+
+func (m *mockOrderRepository) UpdateOrderStatus(_ context.Context, id int64, status models.OrderStatus) (models.Order, error) {
+	m.updateInput.id = id
+	m.updateInput.status = status
+	if m.updateErr != nil {
+		return models.Order{}, m.updateErr
+	}
+	if m.updatedOrder.ID != 0 {
+		return m.updatedOrder, nil
+	}
+	order := m.order
+	order.Status = status
+	return order, nil
 }
 
 type mockItemRepository struct {
@@ -194,7 +214,7 @@ func TestGetOrderByID_Success(t *testing.T) {
 		t.Fatalf("FindOrderItemsByOrderID called with orderID %d, want 1", mockRepo.itemsForID)
 	}
 
-	if got.ID != 1 || got.UserID != 1 || got.MerchantID != 1 {
+	if got.OrderID != 1 || got.UserID != 1 || got.MerchantID != 1 {
 		t.Fatalf("unexpected order fields: %+v", got)
 	}
 	if got.Status != "COMPLETED" {
@@ -213,7 +233,7 @@ func TestGetOrderByID_Success(t *testing.T) {
 
 func TestGetOrderByID_SuccessEmptyItems(t *testing.T) {
 	svc := NewOrderService(&mockOrderRepository{
-		order: models.Order{ID: 2, Status: models.OrderStatusPending},
+		order: models.Order{ID: 2, Status: models.OrderStatusReceived},
 		items: []repository.OrderItemWithItem{},
 	}, &mockItemRepository{})
 
@@ -252,7 +272,7 @@ func TestCreateOrder_Success(t *testing.T) {
 	if orderRepo.createInput.TotalAmount != wantTotal {
 		t.Fatalf("TotalAmount = %v, want %v", orderRepo.createInput.TotalAmount, wantTotal)
 	}
-	if got.ID != 99 || got.Status != "PENDING" || got.TotalAmount != wantTotal {
+	if got.OrderID != 99 || got.Status != "RECEIVED" || got.TotalAmount != wantTotal {
 		t.Fatalf("unexpected order: %+v", got)
 	}
 	if len(got.Items) != 2 {
@@ -327,5 +347,98 @@ func TestCreateOrder_ItemMerchantMismatch(t *testing.T) {
 	})
 	if !errors.Is(err, ErrItemMerchantMismatch) {
 		t.Fatalf("CreateOrder: want ErrItemMerchantMismatch, got %v", err)
+	}
+}
+
+func TestUpdateOrderStatus_InvalidID(t *testing.T) {
+	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{})
+
+	for _, id := range []int64{0, -1} {
+		_, err := svc.UpdateOrderStatus(context.Background(), id, "PREPARING")
+		if !errors.Is(err, ErrInvalidOrderID) {
+			t.Fatalf("UpdateOrderStatus(%d): want ErrInvalidOrderID, got %v", id, err)
+		}
+	}
+}
+
+func TestUpdateOrderStatus_InvalidStatus(t *testing.T) {
+	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{})
+
+	_, err := svc.UpdateOrderStatus(context.Background(), 1, "SHIPPED")
+	if !errors.Is(err, ErrInvalidOrderStatus) {
+		t.Fatalf("UpdateOrderStatus: want ErrInvalidOrderStatus, got %v", err)
+	}
+}
+
+func TestUpdateOrderStatus_NotFound(t *testing.T) {
+	svc := NewOrderService(&mockOrderRepository{
+		orderErr: repository.ErrNotFound,
+	}, &mockItemRepository{})
+
+	_, err := svc.UpdateOrderStatus(context.Background(), 99, "PREPARING")
+	if !errors.Is(err, ErrOrderNotFound) {
+		t.Fatalf("UpdateOrderStatus: want ErrOrderNotFound, got %v", err)
+	}
+}
+
+func TestUpdateOrderStatus_InvalidTransition(t *testing.T) {
+	svc := NewOrderService(&mockOrderRepository{
+		order: models.Order{ID: 1, Status: models.OrderStatusReceived},
+	}, &mockItemRepository{})
+
+	_, err := svc.UpdateOrderStatus(context.Background(), 1, "READY")
+	if !errors.Is(err, ErrInvalidOrderStatusTransition) {
+		t.Fatalf("UpdateOrderStatus: want ErrInvalidOrderStatusTransition, got %v", err)
+	}
+}
+
+func TestUpdateOrderStatus_CompletedOrder(t *testing.T) {
+	svc := NewOrderService(&mockOrderRepository{
+		order: models.Order{ID: 1, Status: models.OrderStatusCompleted},
+	}, &mockItemRepository{})
+
+	_, err := svc.UpdateOrderStatus(context.Background(), 1, "PREPARING")
+	if !errors.Is(err, ErrInvalidOrderStatusTransition) {
+		t.Fatalf("UpdateOrderStatus: want ErrInvalidOrderStatusTransition, got %v", err)
+	}
+}
+
+func TestUpdateOrderStatus_Success(t *testing.T) {
+	updatedAt := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
+	orderRepo := &mockOrderRepository{
+		order: models.Order{
+			ID:          1,
+			UserID:      1,
+			MerchantID:  1,
+			Status:      models.OrderStatusReceived,
+			TotalAmount: 14.99,
+		},
+		updatedOrder: models.Order{
+			ID:          1,
+			UserID:      1,
+			MerchantID:  1,
+			Status:      models.OrderStatusPreparing,
+			TotalAmount: 14.99,
+			UpdatedAt:   updatedAt,
+		},
+		items: []repository.OrderItemWithItem{
+			{ID: 1, ItemID: 2, Name: "Pepperoni Pizza", Quantity: 1, UnitPrice: 14.99},
+		},
+	}
+	svc := NewOrderService(orderRepo, &mockItemRepository{})
+
+	got, err := svc.UpdateOrderStatus(context.Background(), 1, "PREPARING")
+	if err != nil {
+		t.Fatalf("UpdateOrderStatus: unexpected error: %v", err)
+	}
+
+	if orderRepo.updateInput.id != 1 || orderRepo.updateInput.status != models.OrderStatusPreparing {
+		t.Fatalf("UpdateOrderStatus repo call = %+v, want id=1 status=PREPARING", orderRepo.updateInput)
+	}
+	if got.Status != "PREPARING" {
+		t.Fatalf("Status = %q, want PREPARING", got.Status)
+	}
+	if len(got.Items) != 1 || got.Items[0].Name != "Pepperoni Pizza" {
+		t.Fatalf("unexpected items: %+v", got.Items)
 	}
 }

@@ -51,9 +51,10 @@ Migrations live in `internal/db/migrations/` and run automatically on startup.
 
 **Orders:** 3 sample orders across merchants (COMPLETED, PENDING, CONFIRMED)
 
+The active menu is scoped to the merchant configured via the `MERCHANT_ID` environment variable (default `1` in Docker Compose).
+
 ```bash
-curl "http://localhost:8080/v1/menu?merchant_id=1"
-curl "http://localhost:8080/v1/menu?merchant_id=2"
+curl http://localhost:8080/v1/menu
 ```
 
 To reset and re-apply migrations: `docker compose down -v && docker compose up --build`
@@ -69,7 +70,7 @@ docker compose up --build
 
 ```bash
 curl http://localhost:8080/
-curl "http://localhost:8080/v1/menu?merchant_id=1"
+curl http://localhost:8080/v1/menu
 ```
 
 Stop and remove containers:
@@ -100,23 +101,24 @@ docker run --name menu-pg \
 
 ```bash
 export DATABASE_URL="postgres://postgres:postgres@localhost:5432/menu_management?sslmode=disable"
+export MERCHANT_ID=1
 go mod tidy
 go run .
 ```
 
-The server starts on `http://localhost:8080` (override with `PORT` env var).
+The server starts on `http://localhost:8080` (override with `PORT` env var). Set `MERCHANT_ID` to choose which merchant's active menu is served.
 
 ## Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET    | `/`  | Hello World |
-| GET    | `/v1/menu?merchant_id={id}` | Active menu for a merchant |
+| GET    | `/v1/menu` | Active menu for the merchant configured via `MERCHANT_ID` |
 | GET    | `/v1/menu/items/{id}` | Single menu item by ID |
 
 ```bash
 curl http://localhost:8080/
-curl "http://localhost:8080/v1/menu?merchant_id=1"
+curl http://localhost:8080/v1/menu
 curl http://localhost:8080/v1/menu/items/1
 ```
 

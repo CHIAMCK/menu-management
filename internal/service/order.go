@@ -14,6 +14,7 @@ type OrderRepository interface {
 	FindOrderByID(ctx context.Context, id int64) (models.Order, error)
 	FindOrderItemsByOrderID(ctx context.Context, orderID int64) ([]repository.OrderItemWithItem, error)
 	CreateOrder(ctx context.Context, input repository.CreateOrderInput) (int64, error)
+	UpdateOrderStatus(ctx context.Context, id int64, status models.OrderStatus) (models.Order, error)
 }
 
 type OrderService struct {
@@ -127,11 +128,54 @@ func (s *OrderService) GetOrderByID(ctx context.Context, id int64) (dto.OrderDet
 	return toOrderDetailResponse(order, items), nil
 }
 
+func (s *OrderService) UpdateOrderStatus(ctx context.Context, id int64, status string) (dto.OrderDetailResponse, error) {
+	if id <= 0 {
+		return dto.OrderDetailResponse{}, ErrInvalidOrderID
+	}
+
+	targetStatus := models.OrderStatus(status)
+	switch targetStatus {
+	case models.OrderStatusReceived, models.OrderStatusPreparing, models.OrderStatusReady, models.OrderStatusCompleted:
+	default:
+		return dto.OrderDetailResponse{}, ErrInvalidOrderStatus
+	}
+
+	order, err := s.orderRepo.FindOrderByID(ctx, id)
+	if err != nil {
+		switch {
+		case errors.Is(err, repository.ErrNotFound):
+			return dto.OrderDetailResponse{}, ErrOrderNotFound
+		default:
+			return dto.OrderDetailResponse{}, fmt.Errorf("get order: %w", err)
+		}
+	}
+
+	if !order.Status.CanTransitionTo(targetStatus) {
+		return dto.OrderDetailResponse{}, ErrInvalidOrderStatusTransition
+	}
+
+	updatedOrder, err := s.orderRepo.UpdateOrderStatus(ctx, id, targetStatus)
+	if err != nil {
+		switch {
+		case errors.Is(err, repository.ErrNotFound):
+			return dto.OrderDetailResponse{}, ErrOrderNotFound
+		default:
+			return dto.OrderDetailResponse{}, fmt.Errorf("update order status: %w", err)
+		}
+	}
+
+	items, err := s.orderRepo.FindOrderItemsByOrderID(ctx, id)
+	if err != nil {
+		return dto.OrderDetailResponse{}, fmt.Errorf("get order items: %w", err)
+	}
+
+	return toOrderDetailResponse(updatedOrder, items), nil
+}
+
 func toOrderDetailResponse(order models.Order, items []repository.OrderItemWithItem) dto.OrderDetailResponse {
 	itemResponses := make([]dto.OrderItemResponse, 0, len(items))
 	for _, item := range items {
 		itemResponses = append(itemResponses, dto.OrderItemResponse{
-			ID:        item.ID,
 			ItemID:    item.ItemID,
 			Name:      item.Name,
 			Quantity:  item.Quantity,
@@ -140,7 +184,7 @@ func toOrderDetailResponse(order models.Order, items []repository.OrderItemWithI
 	}
 
 	return dto.OrderDetailResponse{
-		ID:          order.ID,
+		OrderID:     order.ID,
 		UserID:      order.UserID,
 		MerchantID:  order.MerchantID,
 		Status:      string(order.Status),

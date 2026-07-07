@@ -5,11 +5,22 @@ import "time"
 type OrderStatus string
 
 const (
-	OrderStatusPending   OrderStatus = "PENDING"
-	OrderStatusConfirmed OrderStatus = "CONFIRMED"
+	OrderStatusReceived  OrderStatus = "RECEIVED"
+	OrderStatusPreparing OrderStatus = "PREPARING"
+	OrderStatusReady     OrderStatus = "READY"
 	OrderStatusCompleted OrderStatus = "COMPLETED"
-	OrderStatusCancelled OrderStatus = "CANCELLED"
 )
+
+var orderStatusTransitions = map[OrderStatus]OrderStatus{
+	OrderStatusReceived:  OrderStatusPreparing,
+	OrderStatusPreparing: OrderStatusReady,
+	OrderStatusReady:     OrderStatusCompleted,
+}
+
+func (s OrderStatus) CanTransitionTo(target OrderStatus) bool {
+	next, ok := orderStatusTransitions[s]
+	return ok && next == target
+}
 
 type Order struct {
 	ID          int64       `json:"id" db:"id"`

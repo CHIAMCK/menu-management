@@ -22,7 +22,7 @@ func NewMenuHandler(menuService *service.MenuService) *MenuHandler {
 func (h *MenuHandler) GetActiveMenu(c *gin.Context) {
 	merchantID, err := strconv.ParseInt(os.Getenv("MERCHANT_ID"), 10, 64)
 	if err != nil || merchantID <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "merchant_id is required and must be a positive integer"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "MERCHANT_ID environment variable is required and must be a positive integer"})
 		return
 	}
 
@@ -30,7 +30,7 @@ func (h *MenuHandler) GetActiveMenu(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidMerchantID):
-			c.JSON(http.StatusBadRequest, gin.H{"error": "merchant_id is required and must be a positive integer"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "MERCHANT_ID environment variable is required and must be a positive integer"})
 		case errors.Is(err, service.ErrActiveMenuNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": "active menu not found"})
 		default:

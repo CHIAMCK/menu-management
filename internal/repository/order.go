@@ -118,7 +118,7 @@ func (r *OrderRepository) CreateOrder(ctx context.Context, input CreateOrderInpu
 		insertOrderQuery,
 		input.UserID,
 		input.MerchantID,
-		models.OrderStatusPending,
+		models.OrderStatusReceived,
 		input.TotalAmount,
 	).Scan(&orderID)
 	if err != nil {
@@ -140,4 +140,31 @@ func (r *OrderRepository) CreateOrder(ctx context.Context, input CreateOrderInpu
 	}
 
 	return orderID, nil
+}
+
+func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, id int64, status models.OrderStatus) (models.Order, error) {
+	const query = `
+		UPDATE orders
+		SET status = $2, updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, user_id, merchant_id, status, total_amount, created_at, updated_at`
+
+	var order models.Order
+	err := r.db.QueryRowContext(ctx, query, id, status).Scan(
+		&order.ID,
+		&order.UserID,
+		&order.MerchantID,
+		&order.Status,
+		&order.TotalAmount,
+		&order.CreatedAt,
+		&order.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.Order{}, ErrNotFound
+	}
+	if err != nil {
+		return models.Order{}, fmt.Errorf("update order status: %w", err)
+	}
+
+	return order, nil
 }

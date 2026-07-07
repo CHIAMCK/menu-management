@@ -8,7 +8,7 @@ CREATE TYPE item_status AS ENUM ('ACTIVE', 'INACTIVE', 'ARCHIVED');
 
 CREATE TYPE item_availability AS ENUM ('AVAILABLE', 'OUT_OF_STOCK');
 
-CREATE TYPE order_status AS ENUM ('PENDING', 'CONFIRMED', 'COMPLETED', 'CANCELLED');
+CREATE TYPE order_status AS ENUM ('RECEIVED', 'PREPARING', 'READY', 'COMPLETED');
 
 CREATE TABLE merchants (
     id         BIGSERIAL PRIMARY KEY,
@@ -34,8 +34,6 @@ CREATE TABLE menus (
     created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
-
-CREATE INDEX idx_menus_merchant_id_status ON menus (merchant_id, status);
 
 CREATE UNIQUE INDEX idx_menus_one_active_per_merchant
     ON menus (merchant_id)
@@ -65,20 +63,16 @@ CREATE TABLE items (
 );
 
 CREATE INDEX idx_items_category_id_status_created_at ON items (category_id, status, created_at);
-CREATE INDEX idx_items_merchant_id_status ON items (merchant_id, status);
 
 CREATE TABLE orders (
     id           BIGSERIAL PRIMARY KEY,
     user_id      BIGINT         NOT NULL REFERENCES users (id),
     merchant_id  BIGINT         NOT NULL REFERENCES merchants (id),
-    status       order_status   NOT NULL DEFAULT 'PENDING',
+    status       order_status   NOT NULL DEFAULT 'RECEIVED',
     total_amount NUMERIC(12, 2) NOT NULL CHECK (total_amount >= 0),
     created_at   TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMPTZ    NOT NULL DEFAULT NOW()
 );
-
-CREATE INDEX idx_orders_user_id ON orders (user_id);
-CREATE INDEX idx_orders_merchant_id ON orders (merchant_id);
 
 CREATE TABLE order_items (
     id         BIGSERIAL PRIMARY KEY,
@@ -90,5 +84,3 @@ CREATE TABLE order_items (
     updated_at TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
     UNIQUE (order_id, item_id)
 );
-
-CREATE INDEX idx_order_items_item_id ON order_items (item_id);

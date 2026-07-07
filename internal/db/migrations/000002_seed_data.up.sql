@@ -34,8 +34,8 @@ INSERT INTO items (id, merchant_id, name, price, status, availability, category_
 
 INSERT INTO orders (id, user_id, merchant_id, status, total_amount) VALUES
     (1, 1, 1, 'COMPLETED', 31.97),
-    (2, 2, 1, 'PENDING', 14.99),
-    (3, 3, 2, 'CONFIRMED', 12.48);
+    (2, 2, 1, 'RECEIVED', 14.99),
+    (3, 3, 2, 'PREPARING', 12.48);
 
 INSERT INTO order_items (id, order_id, item_id, quantity, unit_price) VALUES
     (1, 1, 1, 2, 12.99),

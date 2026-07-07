@@ -24,45 +24,19 @@ func (NoOpPublisher) Close() error {
 }
 
 type rabbitMQPublisher struct {
-	conn      *amqp.Connection
 	channel   *amqp.Channel
 	queueName string
 }
 
-func NewPublisher(ctx context.Context, cfg Config) (OrderEventPublisher, error) {
-	queueName := cfg.QueueName
-	if queueName == "" {
-		queueName = DefaultOrderQueueName
-	}
-
-	conn, err := dialRabbitMQ(ctx, cfg.RabbitMQURL)
+func newPublisher(client *client) (OrderEventPublisher, error) {
+	channel, err := client.conn.Channel()
 	if err != nil {
-		return nil, err
-	}
-
-	channel, err := conn.Channel()
-	if err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("open rabbitmq channel: %w", err)
-	}
-
-	if _, err := channel.QueueDeclare(
-		queueName,
-		true,
-		false,
-		false,
-		false,
-		nil,
-	); err != nil {
-		_ = channel.Close()
-		_ = conn.Close()
-		return nil, fmt.Errorf("declare queue %q: %w", queueName, err)
+		return nil, fmt.Errorf("open rabbitmq publisher channel: %w", err)
 	}
 
 	return &rabbitMQPublisher{
-		conn:      conn,
 		channel:   channel,
-		queueName: queueName,
+		queueName: client.queueName,
 	}, nil
 }
 
@@ -91,12 +65,7 @@ func (p *rabbitMQPublisher) PublishOrderPlaced(_ context.Context, event OrderPla
 
 func (p *rabbitMQPublisher) Close() error {
 	if p.channel != nil {
-		if err := p.channel.Close(); err != nil {
-			return err
-		}
-	}
-	if p.conn != nil {
-		return p.conn.Close()
+		return p.channel.Close()
 	}
 	return nil
 }

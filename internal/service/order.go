@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"menu-management/internal/dto"
@@ -32,9 +33,6 @@ func NewOrderService(orderRepo OrderRepository, itemRepo ItemRepository, publish
 	if publisher == nil {
 		publisher = messaging.NoOpPublisher{}
 	}
-	if userLocker == nil {
-		userLocker = lock.NewInMemoryUserLocker(5 * time.Second)
-	}
 
 	return &OrderService{
 		orderRepo:  orderRepo,
@@ -49,8 +47,12 @@ func (s *OrderService) CreateOrder(ctx context.Context, req dto.CreateOrderReque
 		return dto.OrderDetailResponse{}, err
 	}
 
-	if err := s.userLocker.TryLock(req.UserID); err != nil {
-		return dto.OrderDetailResponse{}, ErrUserOrderLocked
+	if err := s.userLocker.TryLock(ctx, req.UserID); err != nil {
+		if errors.Is(err, lock.ErrUserLocked) {
+			return dto.OrderDetailResponse{}, ErrUserOrderLocked
+		}
+
+		return dto.OrderDetailResponse{}, fmt.Errorf("acquire user lock: %w", err)
 	}
 
 	itemIDs := make([]int64, 0, len(req.Items))
@@ -58,7 +60,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, req dto.CreateOrderReque
 		itemIDs = append(itemIDs, item.ItemID)
 	}
 
-	items, err := s.itemRepo.FindItemsByIDs(ctx, itemIDs)
+	items, err := s.itemRepo.FindItemsForOrder(ctx, itemIDs)
 	if err != nil {
 		return dto.OrderDetailResponse{}, fmt.Errorf("find order items: %w", err)
 	}
@@ -69,6 +71,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, req dto.CreateOrderReque
 	}
 
 	orderItems := make([]repository.CreateOrderItemInput, 0, len(req.Items))
+	createdItems := make([]repository.OrderItemWithItem, 0, len(req.Items))
 	var totalAmount float64
 
 	for _, reqItem := range req.Items {
@@ -76,9 +79,15 @@ func (s *OrderService) CreateOrder(ctx context.Context, req dto.CreateOrderReque
 		if !ok {
 			return dto.OrderDetailResponse{}, ErrItemNotFound
 		}
+
 		if item.MerchantID != req.MerchantID {
 			return dto.OrderDetailResponse{}, ErrItemMerchantMismatch
 		}
+
+		if strings.TrimSpace(item.Name) == "" {
+			return dto.OrderDetailResponse{}, ErrInvalidOrderRequest
+		}
+
 		if item.Status != models.ItemStatusActive || item.Availability != models.ItemAvailabilityAvailable {
 			return dto.OrderDetailResponse{}, ErrItemUnavailable
 		}
@@ -90,6 +99,13 @@ func (s *OrderService) CreateOrder(ctx context.Context, req dto.CreateOrderReque
 			Quantity:  reqItem.Quantity,
 			UnitPrice: item.Price,
 		})
+
+		createdItems = append(createdItems, repository.OrderItemWithItem{
+			ItemID:    reqItem.ItemID,
+			Name:      item.Name,
+			Quantity:  reqItem.Quantity,
+			UnitPrice: item.Price,
+		})
 	}
 
 	orderID, err := s.orderRepo.CreateOrder(ctx, repository.CreateOrderInput{
@@ -98,14 +114,21 @@ func (s *OrderService) CreateOrder(ctx context.Context, req dto.CreateOrderReque
 		TotalAmount: totalAmount,
 		Items:       orderItems,
 	})
+
 	if err != nil {
 		return dto.OrderDetailResponse{}, fmt.Errorf("create order: %w", err)
 	}
 
-	order, err := s.GetOrderByID(ctx, orderID)
-	if err != nil {
-		return dto.OrderDetailResponse{}, err
-	}
+	now := time.Now()
+	order := toOrderDetailResponse(models.Order{
+		ID:          orderID,
+		UserID:      req.UserID,
+		MerchantID:  req.MerchantID,
+		Status:      models.OrderStatusReceived,
+		TotalAmount: totalAmount,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}, createdItems)
 
 	if err := s.publisher.PublishOrderPlaced(ctx, messaging.FromOrderDetail(order)); err != nil {
 		slog.Warn("failed to publish order.placed event", "order_id", order.OrderID, "error", err)
@@ -115,15 +138,26 @@ func (s *OrderService) CreateOrder(ctx context.Context, req dto.CreateOrderReque
 }
 
 func validateCreateOrderRequest(req dto.CreateOrderRequest) error {
-	if req.UserID <= 0 || req.MerchantID <= 0 || len(req.Items) == 0 {
+	if req.UserID <= 0 {
+		return ErrInvalidOrderRequest
+	}
+	if req.MerchantID <= 0 {
+		return ErrInvalidOrderRequest
+	}
+	if len(req.Items) == 0 {
 		return ErrInvalidOrderRequest
 	}
 
 	seenItemIDs := make(map[int64]struct{}, len(req.Items))
 	for _, item := range req.Items {
-		if item.ItemID <= 0 || item.Quantity <= 0 {
+		if item.ItemID <= 0 {
 			return ErrInvalidOrderRequest
 		}
+
+		if item.Quantity <= 0 {
+			return ErrInvalidOrderRequest
+		}
+
 		if _, exists := seenItemIDs[item.ItemID]; exists {
 			return ErrDuplicateOrderItem
 		}

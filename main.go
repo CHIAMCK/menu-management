@@ -15,8 +15,10 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/redis/go-redis/v9"
 
 	"menu-management/internal/db"
+	"menu-management/internal/lock"
 	"menu-management/internal/messaging"
 	"menu-management/internal/routes"
 )
@@ -27,8 +29,7 @@ type config struct {
 }
 
 type messagingComponents struct {
-	publisher messaging.OrderEventPublisher
-	consumer  *messaging.Consumer
+	components *messaging.Components
 }
 
 func loadConfig() config {
@@ -64,23 +65,32 @@ func setupDatabase(ctx context.Context, databaseURL string) (*sql.DB, error) {
 }
 
 func setupMessaging(ctx context.Context) (*messagingComponents, error) {
-	msgCfg := messaging.ConfigFromEnv(os.Getenv)
-
-	publisher, err := messaging.NewPublisher(ctx, msgCfg)
+	components, err := messaging.NewComponents(ctx, messaging.ConfigFromEnv(os.Getenv))
 	if err != nil {
-		return nil, fmt.Errorf("order event publisher setup failed: %w", err)
+		return nil, fmt.Errorf("messaging setup failed: %w", err)
 	}
 
-	consumer, err := messaging.NewConsumer(ctx, msgCfg)
-	if err != nil {
-		_ = publisher.Close()
-		return nil, fmt.Errorf("order consumer setup failed: %w", err)
+	return &messagingComponents{components: components}, nil
+}
+
+func setupRedis(ctx context.Context) (*redis.Client, error) {
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		redisURL = "redis://localhost:6379/0"
 	}
 
-	return &messagingComponents{
-		publisher: publisher,
-		consumer:  consumer,
-	}, nil
+	opts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse redis url: %w", err)
+	}
+
+	client := redis.NewClient(opts)
+	if err := client.Ping(ctx).Err(); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("redis ping: %w", err)
+	}
+
+	return client, nil
 }
 
 func runServer(ctx context.Context, port string, handler http.Handler) error {
@@ -122,15 +132,21 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer msg.publisher.Close()
-	defer msg.consumer.Close()
+	defer msg.components.Close()
+
+	redisClient, err := setupRedis(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer redisClient.Close()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	var workerWG sync.WaitGroup
-	msg.consumer.RunInBackground(ctx, logger, &workerWG)
+	msg.components.Consumer.RunInBackground(ctx, logger, &workerWG)
 
-	router := routes.Setup(sqlDB, msg.publisher)
+	userLocker := lock.NewRedisUserLocker(redisClient, 5*time.Second)
+	router := routes.Setup(sqlDB, msg.components.Publisher, userLocker)
 	if err := runServer(ctx, cfg.port, router); err != nil {
 		log.Fatal(err)
 	}

@@ -12,51 +12,24 @@ import (
 )
 
 type Consumer struct {
-	conn      *amqp.Connection
 	channel   *amqp.Channel
 	queueName string
 }
 
-func NewConsumer(ctx context.Context, cfg Config) (*Consumer, error) {
-	queueName := cfg.QueueName
-	if queueName == "" {
-		queueName = DefaultOrderQueueName
-	}
-
-	conn, err := dialRabbitMQ(ctx, cfg.RabbitMQURL)
+func newConsumer(client *client) (*Consumer, error) {
+	channel, err := client.conn.Channel()
 	if err != nil {
-		return nil, err
-	}
-
-	channel, err := conn.Channel()
-	if err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("open rabbitmq channel: %w", err)
-	}
-
-	if _, err := channel.QueueDeclare(
-		queueName,
-		true,
-		false,
-		false,
-		false,
-		nil,
-	); err != nil {
-		_ = channel.Close()
-		_ = conn.Close()
-		return nil, fmt.Errorf("declare queue %q: %w", queueName, err)
+		return nil, fmt.Errorf("open rabbitmq consumer channel: %w", err)
 	}
 
 	if err := channel.Qos(1, 0, false); err != nil {
 		_ = channel.Close()
-		_ = conn.Close()
 		return nil, fmt.Errorf("set qos: %w", err)
 	}
 
 	return &Consumer{
-		conn:      conn,
 		channel:   channel,
-		queueName: queueName,
+		queueName: client.queueName,
 	}, nil
 }
 
@@ -115,12 +88,7 @@ func (c *Consumer) run(ctx context.Context, logger *slog.Logger) error {
 
 func (c *Consumer) Close() error {
 	if c.channel != nil {
-		if err := c.channel.Close(); err != nil {
-			return err
-		}
-	}
-	if c.conn != nil {
-		return c.conn.Close()
+		return c.channel.Close()
 	}
 	return nil
 }

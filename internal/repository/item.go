@@ -47,19 +47,19 @@ func (r *ItemRepository) FindItemByID(ctx context.Context, id int64) (models.Ite
 	return item, nil
 }
 
-func (r *ItemRepository) FindItemsByIDs(ctx context.Context, ids []int64) ([]models.Item, error) {
+func (r *ItemRepository) FindItemsForOrder(ctx context.Context, ids []int64) ([]models.Item, error) {
 	if len(ids) == 0 {
 		return []models.Item{}, nil
 	}
 
 	const query = `
-		SELECT id, merchant_id, name, price, status, availability, category_id, created_at, updated_at
+		SELECT id, merchant_id, name, price, status, availability
 		FROM items
 		WHERE id = ANY($1)`
 
 	rows, err := r.db.QueryContext(ctx, query, pq.Array(ids))
 	if err != nil {
-		return nil, fmt.Errorf("find items by ids: %w", err)
+		return nil, fmt.Errorf("find items for order: %w", err)
 	}
 	defer rows.Close()
 
@@ -73,9 +73,6 @@ func (r *ItemRepository) FindItemsByIDs(ctx context.Context, ids []int64) ([]mod
 			&item.Price,
 			&item.Status,
 			&item.Availability,
-			&item.CategoryID,
-			&item.CreatedAt,
-			&item.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan item: %w", err)
 		}

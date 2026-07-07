@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/lib/pq"
+
 	"menu-management/internal/models"
 )
 
@@ -125,14 +127,8 @@ func (r *OrderRepository) CreateOrder(ctx context.Context, input CreateOrderInpu
 		return 0, fmt.Errorf("insert order: %w", err)
 	}
 
-	const insertOrderItemQuery = `
-		INSERT INTO order_items (order_id, item_id, quantity, unit_price)
-		VALUES ($1, $2, $3, $4)`
-
-	for _, item := range input.Items {
-		if _, err := tx.ExecContext(ctx, insertOrderItemQuery, orderID, item.ItemID, item.Quantity, item.UnitPrice); err != nil {
-			return 0, fmt.Errorf("insert order item: %w", err)
-		}
+	if err := insertOrderItems(ctx, tx, orderID, input.Items); err != nil {
+		return 0, err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -140,6 +136,31 @@ func (r *OrderRepository) CreateOrder(ctx context.Context, input CreateOrderInpu
 	}
 
 	return orderID, nil
+}
+
+func insertOrderItems(ctx context.Context, tx *sql.Tx, orderID int64, items []CreateOrderItemInput) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	itemIDs := make([]int64, len(items))
+	quantities := make([]int32, len(items))
+	unitPrices := make([]float64, len(items))
+	for i, item := range items {
+		itemIDs[i] = item.ItemID
+		quantities[i] = int32(item.Quantity)
+		unitPrices[i] = item.UnitPrice
+	}
+
+	const query = `
+		INSERT INTO order_items (order_id, item_id, quantity, unit_price)
+		SELECT $1, unnest($2::bigint[]), unnest($3::int[]), unnest($4::numeric[])`
+
+	if _, err := tx.ExecContext(ctx, query, orderID, pq.Array(itemIDs), pq.Array(quantities), pq.Array(unitPrices)); err != nil {
+		return fmt.Errorf("insert order items: %w", err)
+	}
+
+	return nil
 }
 
 func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, id int64, status models.OrderStatus) (models.Order, error) {

@@ -3,7 +3,6 @@ package routes
 import (
 	"database/sql"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -14,7 +13,7 @@ import (
 	"menu-management/internal/service"
 )
 
-func Setup(db *sql.DB, publisher messaging.OrderEventPublisher) *gin.Engine {
+func Setup(db *sql.DB, publisher messaging.OrderEventPublisher, userLocker lock.UserLocker) *gin.Engine {
 	r := gin.Default()
 
 	r.GET("/", func(c *gin.Context) {
@@ -30,7 +29,6 @@ func Setup(db *sql.DB, publisher messaging.OrderEventPublisher) *gin.Engine {
 	itemHandler := handlers.NewItemHandler(itemService)
 
 	orderRepo := repository.NewOrderRepository(db)
-	userLocker := lock.NewInMemoryUserLocker(5 * time.Second)
 	orderService := service.NewOrderService(orderRepo, itemRepo, publisher, userLocker)
 	orderHandler := handlers.NewOrderHandler(orderService)
 

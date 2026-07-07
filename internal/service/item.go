@@ -12,7 +12,7 @@ import (
 
 type ItemRepository interface {
 	FindItemByID(ctx context.Context, id int64) (models.Item, error)
-	FindItemsByIDs(ctx context.Context, ids []int64) ([]models.Item, error)
+	FindItemsForOrder(ctx context.Context, ids []int64) ([]models.Item, error)
 	UpdateItemAvailability(ctx context.Context, id int64, availability models.ItemAvailability) (models.Item, error)
 }
 

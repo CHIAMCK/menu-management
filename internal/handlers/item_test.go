@@ -41,7 +41,7 @@ func (m *mockItemHandlerRepository) FindItemByID(_ context.Context, id int64) (m
 	return models.Item{}, repository.ErrNotFound
 }
 
-func (m *mockItemHandlerRepository) FindItemsByIDs(_ context.Context, _ []int64) ([]models.Item, error) {
+func (m *mockItemHandlerRepository) FindItemsForOrder(_ context.Context, _ []int64) ([]models.Item, error) {
 	return nil, errors.New("not implemented")
 }
 

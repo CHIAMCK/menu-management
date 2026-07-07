@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/lib/pq"
 
 	"menu-management/internal/models"
 )
@@ -34,11 +35,13 @@ func TestCreateOrder_Success(t *testing.T) {
 		WithArgs(input.UserID, input.MerchantID, models.OrderStatusReceived, input.TotalAmount).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(10))
 	mock.ExpectExec(`INSERT INTO order_items`).
-		WithArgs(int64(10), input.Items[0].ItemID, input.Items[0].Quantity, input.Items[0].UnitPrice).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`INSERT INTO order_items`).
-		WithArgs(int64(10), input.Items[1].ItemID, input.Items[1].Quantity, input.Items[1].UnitPrice).
-		WillReturnResult(sqlmock.NewResult(2, 1))
+		WithArgs(
+			int64(10),
+			pq.Array([]int64{1, 4}),
+			pq.Array([]int32{2, 1}),
+			pq.Array([]float64{12.99, 5.99}),
+		).
+		WillReturnResult(sqlmock.NewResult(1, 2))
 	mock.ExpectCommit()
 
 	repo := NewOrderRepository(db)
@@ -121,10 +124,12 @@ func TestCreateOrder_InsertOrderItemFails(t *testing.T) {
 		WithArgs(int64(1), int64(1), models.OrderStatusReceived, 31.97).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(10))
 	mock.ExpectExec(`INSERT INTO order_items`).
-		WithArgs(int64(10), int64(1), 2, 12.99).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`INSERT INTO order_items`).
-		WithArgs(int64(10), int64(4), 1, 5.99).
+		WithArgs(
+			int64(10),
+			pq.Array([]int64{1, 4}),
+			pq.Array([]int32{2, 1}),
+			pq.Array([]float64{12.99, 5.99}),
+		).
 		WillReturnError(insertItemErr)
 	mock.ExpectRollback()
 
@@ -159,7 +164,12 @@ func TestCreateOrder_CommitFails(t *testing.T) {
 		WithArgs(int64(1), int64(1), models.OrderStatusReceived, 12.99).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(10))
 	mock.ExpectExec(`INSERT INTO order_items`).
-		WithArgs(int64(10), int64(1), 1, 12.99).
+		WithArgs(
+			int64(10),
+			pq.Array([]int64{1}),
+			pq.Array([]int32{1}),
+			pq.Array([]float64{12.99}),
+		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit().WillReturnError(commitErr)
 

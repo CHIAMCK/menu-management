@@ -13,11 +13,15 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"menu-management/internal/dto"
-	"menu-management/internal/lock"
+	"menu-management/internal/lock/locktest"
 	"menu-management/internal/models"
 	"menu-management/internal/repository"
 	"menu-management/internal/service"
 )
+
+type noopUserLocker struct{}
+
+func (noopUserLocker) TryLock(context.Context, int64) error { return nil }
 
 type mockOrderRepository struct {
 	order       models.Order
@@ -115,7 +119,7 @@ func (m *mockItemRepository) FindItemByID(_ context.Context, id int64) (models.I
 	return models.Item{}, repository.ErrNotFound
 }
 
-func (m *mockItemRepository) FindItemsByIDs(_ context.Context, ids []int64) ([]models.Item, error) {
+func (m *mockItemRepository) FindItemsForOrder(_ context.Context, ids []int64) ([]models.Item, error) {
 	if m.itemsErr != nil {
 		return nil, m.itemsErr
 	}
@@ -140,7 +144,7 @@ func (m *mockItemRepository) UpdateItemAvailability(_ context.Context, _ int64, 
 
 func setupOrderRouter(orderRepo *mockOrderRepository, itemRepo *mockItemRepository) *gin.Engine {
 	gin.SetMode(gin.TestMode)
-	userLocker := lock.NewInMemoryUserLocker(5 * time.Second)
+	userLocker := noopUserLocker{}
 	svc := service.NewOrderService(orderRepo, itemRepo, nil, userLocker)
 	handler := NewOrderHandler(svc)
 
@@ -252,8 +256,8 @@ func TestGetOrder_Success(t *testing.T) {
 func TestCreateOrder_Success(t *testing.T) {
 	r := setupOrderRouter(&mockOrderRepository{createID: 99}, &mockItemRepository{
 		items: []models.Item{
-			{ID: 1, MerchantID: 1, Price: 12.99, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
-			{ID: 4, MerchantID: 1, Price: 5.99, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
+			{ID: 1, MerchantID: 1, Name: "Margherita Pizza", Price: 12.99, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
+			{ID: 4, MerchantID: 1, Name: "Garlic Bread", Price: 5.99, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
 		},
 	})
 
@@ -281,7 +285,55 @@ func TestCreateOrder_Success(t *testing.T) {
 func TestCreateOrder_InvalidBody(t *testing.T) {
 	r := setupOrderRouter(&mockOrderRepository{}, &mockItemRepository{})
 
-	req := httptest.NewRequest(http.MethodPost, "/orders", bytes.NewBufferString(`{"user_id":1}`))
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "missing merchant id",
+			body: `{"user_id":1,"items":[{"item_id":1,"quantity":1}]}`,
+		},
+		{
+			name: "missing user id",
+			body: `{"merchant_id":1,"items":[{"item_id":1,"quantity":1}]}`,
+		},
+		{
+			name: "zero quantity",
+			body: `{"user_id":1,"merchant_id":1,"items":[{"item_id":1,"quantity":0}]}`,
+		},
+		{
+			name: "missing item id",
+			body: `{"user_id":1,"merchant_id":1,"items":[{"quantity":1}]}`,
+		},
+		{
+			name: "empty items",
+			body: `{"user_id":1,"merchant_id":1,"items":[]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/orders", bytes.NewBufferString(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+			}
+		})
+	}
+}
+
+func TestCreateOrder_DuplicateItem(t *testing.T) {
+	r := setupOrderRouter(&mockOrderRepository{}, &mockItemRepository{
+		items: []models.Item{
+			{ID: 1, MerchantID: 1, Name: "Margherita Pizza", Price: 12.99, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
+		},
+	})
+
+	body := `{"user_id":1,"merchant_id":1,"items":[{"item_id":1,"quantity":1},{"item_id":1,"quantity":2}]}`
+	req := httptest.NewRequest(http.MethodPost, "/orders", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -289,12 +341,20 @@ func TestCreateOrder_InvalidBody(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
+
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["error"] != "duplicate item in order" {
+		t.Fatalf("error = %q, want duplicate item in order", resp["error"])
+	}
 }
 
 func TestCreateOrder_ItemNotFound(t *testing.T) {
 	r := setupOrderRouter(&mockOrderRepository{}, &mockItemRepository{
 		items: []models.Item{
-			{ID: 1, MerchantID: 1, Price: 12.99, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
+			{ID: 1, MerchantID: 1, Name: "Margherita Pizza", Price: 12.99, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
 		},
 	})
 
@@ -312,7 +372,7 @@ func TestCreateOrder_ItemNotFound(t *testing.T) {
 func TestCreateOrder_ItemUnavailable(t *testing.T) {
 	r := setupOrderRouter(&mockOrderRepository{}, &mockItemRepository{
 		items: []models.Item{
-			{ID: 5, MerchantID: 1, Price: 2.50, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityOutOfStock},
+			{ID: 5, MerchantID: 1, Name: "Sparkling Water", Price: 2.50, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityOutOfStock},
 		},
 	})
 
@@ -328,15 +388,15 @@ func TestCreateOrder_ItemUnavailable(t *testing.T) {
 }
 
 func TestCreateOrder_UserLocked(t *testing.T) {
-	userLocker := lock.NewInMemoryUserLocker(5 * time.Second)
-	if err := userLocker.TryLock(1); err != nil {
+	userLocker := locktest.NewUserLocker(t)
+	if err := userLocker.TryLock(context.Background(), 1); err != nil {
 		t.Fatalf("TryLock: unexpected error: %v", err)
 	}
 
 	gin.SetMode(gin.TestMode)
 	svc := service.NewOrderService(&mockOrderRepository{createID: 99}, &mockItemRepository{
 		items: []models.Item{
-			{ID: 1, MerchantID: 1, Price: 12.99, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
+			{ID: 1, MerchantID: 1, Name: "Margherita Pizza", Price: 12.99, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
 		},
 	}, nil, userLocker)
 	handler := NewOrderHandler(svc)

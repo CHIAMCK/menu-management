@@ -5,11 +5,15 @@ import (
 	"log"
 	"os"
 
+	"github.com/joho/godotenv"
+
 	"menu-management/internal/db"
 	"menu-management/internal/routes"
 )
 
 func main() {
+	_ = godotenv.Load()
+
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		databaseURL = "postgres://postgres:postgres@localhost:5432/menu_management?sslmode=disable"

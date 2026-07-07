@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -19,8 +20,8 @@ func NewMenuHandler(menuService *service.MenuService) *MenuHandler {
 }
 
 func (h *MenuHandler) GetActiveMenu(c *gin.Context) {
-	merchantID, err := strconv.ParseInt(c.Query("merchant_id"), 10, 64)
-	if err != nil {
+	merchantID, err := strconv.ParseInt(os.Getenv("MERCHANT_ID"), 10, 64)
+	if err != nil || merchantID <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "merchant_id is required and must be a positive integer"})
 		return
 	}

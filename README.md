@@ -112,10 +112,12 @@ The server starts on `http://localhost:8080` (override with `PORT` env var).
 |--------|------|-------------|
 | GET    | `/`  | Hello World |
 | GET    | `/v1/menu?merchant_id={id}` | Active menu for a merchant |
+| GET    | `/v1/menu/items/{id}` | Single menu item by ID |
 
 ```bash
 curl http://localhost:8080/
 curl "http://localhost:8080/v1/menu?merchant_id=1"
+curl http://localhost:8080/v1/menu/items/1
 ```
 
 ## Project Structure

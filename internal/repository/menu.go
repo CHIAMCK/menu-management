@@ -47,7 +47,7 @@ func (r *MenuRepository) FindCategoriesByMenuID(ctx context.Context, menuID int6
 	const query = `
 		SELECT id, name, status
 		FROM categories
-		WHERE menu_id = $1
+		WHERE menu_id = $1 AND status = 'ACTIVE'
 		ORDER BY created_at`
 
 	rows, err := r.db.QueryContext(ctx, query, menuID)
@@ -85,7 +85,7 @@ func (r *MenuRepository) FindItemsByCategoryIDs(ctx context.Context, categoryIDs
 	const query = `
 		SELECT id, name, price, status, availability, category_id
 		FROM items
-		WHERE category_id = ANY($1)
+		WHERE category_id = ANY($1) AND status = 'ACTIVE'
 		ORDER BY category_id, created_at`
 
 	rows, err := r.db.QueryContext(ctx, query, pq.Array(categoryIDs))

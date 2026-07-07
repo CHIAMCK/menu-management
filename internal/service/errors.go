@@ -5,6 +5,7 @@ import "errors"
 var (
 	ErrActiveMenuNotFound = errors.New("active menu not found")
 	ErrInvalidMerchantID  = errors.New("invalid merchant id")
-	ErrInvalidItemID      = errors.New("invalid item id")
-	ErrItemNotFound       = errors.New("item not found")
+	ErrInvalidItemID            = errors.New("invalid item id")
+	ErrItemNotFound             = errors.New("item not found")
+	ErrInvalidItemAvailability  = errors.New("invalid item availability")
 )

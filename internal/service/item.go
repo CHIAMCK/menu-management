@@ -12,6 +12,7 @@ import (
 
 type ItemRepository interface {
 	FindItemByID(ctx context.Context, id int64) (models.Item, error)
+	UpdateItemAvailability(ctx context.Context, id int64, availability models.ItemAvailability) error
 }
 
 type ItemService struct {
@@ -35,6 +36,34 @@ func (s *ItemService) GetItemByID(ctx context.Context, id int64) (dto.ItemDetail
 		default:
 			return dto.ItemDetailResponse{}, fmt.Errorf("get item: %w", err)
 		}
+	}
+
+	return toItemDetailResponse(item), nil
+}
+
+func (s *ItemService) UpdateItemAvailability(ctx context.Context, id int64, availability string) (dto.ItemDetailResponse, error) {
+	if id <= 0 {
+		return dto.ItemDetailResponse{}, ErrInvalidItemID
+	}
+
+	itemAvailability := models.ItemAvailability(availability)
+	if itemAvailability != models.ItemAvailabilityAvailable && itemAvailability != models.ItemAvailabilityOutOfStock {
+		return dto.ItemDetailResponse{}, ErrInvalidItemAvailability
+	}
+
+	err := s.itemRepo.UpdateItemAvailability(ctx, id, itemAvailability)
+	if err != nil {
+		switch {
+		case errors.Is(err, repository.ErrNotFound):
+			return dto.ItemDetailResponse{}, ErrItemNotFound
+		default:
+			return dto.ItemDetailResponse{}, fmt.Errorf("update item availability: %w", err)
+		}
+	}
+
+	item, err := s.itemRepo.FindItemByID(ctx, id)
+	if err != nil {
+		return dto.ItemDetailResponse{}, fmt.Errorf("get updated item: %w", err)
 	}
 
 	return toItemDetailResponse(item), nil

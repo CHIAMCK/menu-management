@@ -2,6 +2,10 @@ package dto
 
 import "time"
 
+type UpdateItemAvailabilityRequest struct {
+	Availability string `json:"availability" binding:"required"`
+}
+
 type ItemDetailResponse struct {
 	ID           int64     `json:"id"`
 	MerchantID   int64     `json:"merchant_id"`

@@ -30,6 +30,7 @@ func Setup(db *sql.DB) *gin.Engine {
 	{
 		v1.GET("/menu", menuHandler.GetActiveMenu)
 		v1.GET("/menu/items/:id", itemHandler.GetItem)
+		v1.PATCH("/menu/items/:id", itemHandler.UpdateItemAvailability)
 	}
 
 	return r

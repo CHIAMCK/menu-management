@@ -44,3 +44,25 @@ func (r *ItemRepository) FindItemByID(ctx context.Context, id int64) (models.Ite
 
 	return item, nil
 }
+
+func (r *ItemRepository) UpdateItemAvailability(ctx context.Context, id int64, availability models.ItemAvailability) error {
+	const query = `
+		UPDATE items
+		SET availability = $1
+		WHERE id = $2`
+
+	result, err := r.db.ExecContext(ctx, query, availability, id)
+	if err != nil {
+		return fmt.Errorf("update item availability: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update item availability rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}

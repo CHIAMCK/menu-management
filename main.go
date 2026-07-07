@@ -2,8 +2,17 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 	"log"
+	"log/slog"
+	"net/http"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 
@@ -12,7 +21,17 @@ import (
 	"menu-management/internal/routes"
 )
 
-func main() {
+type config struct {
+	databaseURL string
+	port        string
+}
+
+type messagingComponents struct {
+	publisher messaging.OrderEventPublisher
+	consumer  *messaging.Consumer
+}
+
+func loadConfig() config {
 	_ = godotenv.Load()
 
 	databaseURL := os.Getenv("DATABASE_URL")
@@ -20,45 +39,101 @@ func main() {
 		databaseURL = "postgres://postgres:postgres@localhost:5432/menu_management?sslmode=disable"
 	}
 
-	if err := db.RunMigrations(databaseURL); err != nil {
-		log.Fatalf("migrations failed: %v", err)
-	}
-
-	sqlDB, err := db.Connect(context.Background())
-	if err != nil {
-		log.Fatalf("database connection failed: %v", err)
-	}
-	defer sqlDB.Close()
-
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	publisher, err := newOrderEventPublisher(context.Background())
-	if err != nil {
-		log.Fatalf("order event publisher setup failed: %v", err)
-	}
-	defer publisher.Close()
-
-	r := routes.Setup(sqlDB, publisher)
-
-	log.Printf("menu management server listening on :%s", port)
-	if err := r.Run(":" + port); err != nil {
-		log.Fatal(err)
+	return config{
+		databaseURL: databaseURL,
+		port:        port,
 	}
 }
 
-func newOrderEventPublisher(ctx context.Context) (messaging.OrderEventPublisher, error) {
-	rabbitMQURL := os.Getenv("RABBITMQ_URL")
-	if rabbitMQURL == "" {
-		rabbitMQURL = "amqp://guest:guest@localhost:5672/"
+func setupDatabase(ctx context.Context, databaseURL string) (*sql.DB, error) {
+	if err := db.RunMigrations(databaseURL); err != nil {
+		return nil, fmt.Errorf("migrations failed: %w", err)
 	}
 
-	queueName := os.Getenv("ORDER_QUEUE_NAME")
-	if queueName == "" {
-		queueName = messaging.DefaultOrderQueueName
+	sqlDB, err := db.Connect(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("database connection failed: %w", err)
 	}
 
-	return messaging.NewRabbitMQPublisher(ctx, rabbitMQURL, queueName)
+	return sqlDB, nil
+}
+
+func setupMessaging(ctx context.Context) (*messagingComponents, error) {
+	msgCfg := messaging.ConfigFromEnv(os.Getenv)
+
+	publisher, err := messaging.NewPublisher(ctx, msgCfg)
+	if err != nil {
+		return nil, fmt.Errorf("order event publisher setup failed: %w", err)
+	}
+
+	consumer, err := messaging.NewConsumer(ctx, msgCfg)
+	if err != nil {
+		_ = publisher.Close()
+		return nil, fmt.Errorf("order consumer setup failed: %w", err)
+	}
+
+	return &messagingComponents{
+		publisher: publisher,
+		consumer:  consumer,
+	}, nil
+}
+
+func runServer(ctx context.Context, port string, handler http.Handler) error {
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: handler,
+	}
+
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("server shutdown: %v", err)
+		}
+	}()
+
+	log.Printf("menu management server listening on :%s", port)
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+
+	return nil
+}
+
+func main() {
+	cfg := loadConfig()
+
+	sqlDB, err := setupDatabase(context.Background(), cfg.databaseURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer sqlDB.Close()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	msg, err := setupMessaging(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer msg.publisher.Close()
+	defer msg.consumer.Close()
+
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	var workerWG sync.WaitGroup
+	msg.consumer.RunInBackground(ctx, logger, &workerWG)
+
+	router := routes.Setup(sqlDB, msg.publisher)
+	if err := runServer(ctx, cfg.port, router); err != nil {
+		log.Fatal(err)
+	}
+
+	workerWG.Wait()
 }

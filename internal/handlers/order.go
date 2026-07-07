@@ -62,6 +62,8 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "item unavailable"})
 		case errors.Is(err, service.ErrItemMerchantMismatch):
 			c.JSON(http.StatusBadRequest, gin.H{"error": "item does not belong to merchant"})
+		case errors.Is(err, service.ErrUserOrderLocked):
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "order already in progress, please wait"})
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create order"})
 		}

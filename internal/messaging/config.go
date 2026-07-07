@@ -10,9 +10,32 @@ import (
 )
 
 const (
+	DefaultOrderQueueName  = "order.placed"
 	defaultDialMaxAttempts = 30
-	defaultDialRetryDelay    = 2 * time.Second
+	defaultDialRetryDelay  = 2 * time.Second
 )
+
+type Config struct {
+	RabbitMQURL string
+	QueueName   string
+}
+
+func ConfigFromEnv(getenv func(string) string) Config {
+	rabbitMQURL := getenv("RABBITMQ_URL")
+	if rabbitMQURL == "" {
+		rabbitMQURL = "amqp://guest:guest@localhost:5672/"
+	}
+
+	queueName := getenv("ORDER_QUEUE_NAME")
+	if queueName == "" {
+		queueName = DefaultOrderQueueName
+	}
+
+	return Config{
+		RabbitMQURL: rabbitMQURL,
+		QueueName:   queueName,
+	}
+}
 
 func dialRabbitMQ(ctx context.Context, rabbitMQURL string) (*amqp.Connection, error) {
 	var lastErr error

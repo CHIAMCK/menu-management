@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"menu-management/internal/dto"
+	"menu-management/internal/lock"
 	"menu-management/internal/models"
 	"menu-management/internal/repository"
 	"menu-management/internal/service"
@@ -139,7 +140,8 @@ func (m *mockItemRepository) UpdateItemAvailability(_ context.Context, _ int64, 
 
 func setupOrderRouter(orderRepo *mockOrderRepository, itemRepo *mockItemRepository) *gin.Engine {
 	gin.SetMode(gin.TestMode)
-	svc := service.NewOrderService(orderRepo, itemRepo, nil)
+	userLocker := lock.NewInMemoryUserLocker(5 * time.Second)
+	svc := service.NewOrderService(orderRepo, itemRepo, nil, userLocker)
 	handler := NewOrderHandler(svc)
 
 	r := gin.New()
@@ -322,6 +324,42 @@ func TestCreateOrder_ItemUnavailable(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestCreateOrder_UserLocked(t *testing.T) {
+	userLocker := lock.NewInMemoryUserLocker(5 * time.Second)
+	if err := userLocker.TryLock(1); err != nil {
+		t.Fatalf("TryLock: unexpected error: %v", err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	svc := service.NewOrderService(&mockOrderRepository{createID: 99}, &mockItemRepository{
+		items: []models.Item{
+			{ID: 1, MerchantID: 1, Price: 12.99, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
+		},
+	}, nil, userLocker)
+	handler := NewOrderHandler(svc)
+
+	r := gin.New()
+	r.POST("/orders", handler.CreateOrder)
+
+	body := `{"user_id":1,"merchant_id":1,"items":[{"item_id":1,"quantity":1}]}`
+	req := httptest.NewRequest(http.MethodPost, "/orders", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusTooManyRequests)
+	}
+
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["error"] != "order already in progress, please wait" {
+		t.Fatalf("error = %q, want order already in progress, please wait", resp["error"])
 	}
 }
 

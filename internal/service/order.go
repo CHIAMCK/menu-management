@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"menu-management/internal/dto"
+	"menu-management/internal/lock"
 	"menu-management/internal/messaging"
 	"menu-management/internal/models"
 	"menu-management/internal/repository"
@@ -20,26 +22,35 @@ type OrderRepository interface {
 }
 
 type OrderService struct {
-	orderRepo OrderRepository
-	itemRepo  ItemRepository
-	publisher messaging.OrderEventPublisher
+	orderRepo  OrderRepository
+	itemRepo   ItemRepository
+	publisher  messaging.OrderEventPublisher
+	userLocker lock.UserLocker
 }
 
-func NewOrderService(orderRepo OrderRepository, itemRepo ItemRepository, publisher messaging.OrderEventPublisher) *OrderService {
+func NewOrderService(orderRepo OrderRepository, itemRepo ItemRepository, publisher messaging.OrderEventPublisher, userLocker lock.UserLocker) *OrderService {
 	if publisher == nil {
 		publisher = messaging.NoOpPublisher{}
 	}
+	if userLocker == nil {
+		userLocker = lock.NewInMemoryUserLocker(5 * time.Second)
+	}
 
 	return &OrderService{
-		orderRepo: orderRepo,
-		itemRepo:  itemRepo,
-		publisher: publisher,
+		orderRepo:  orderRepo,
+		itemRepo:   itemRepo,
+		publisher:  publisher,
+		userLocker: userLocker,
 	}
 }
 
 func (s *OrderService) CreateOrder(ctx context.Context, req dto.CreateOrderRequest) (dto.OrderDetailResponse, error) {
 	if err := validateCreateOrderRequest(req); err != nil {
 		return dto.OrderDetailResponse{}, err
+	}
+
+	if err := s.userLocker.TryLock(req.UserID); err != nil {
+		return dto.OrderDetailResponse{}, ErrUserOrderLocked
 	}
 
 	itemIDs := make([]int64, 0, len(req.Items))

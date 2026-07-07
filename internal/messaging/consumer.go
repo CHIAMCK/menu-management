@@ -4,25 +4,26 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"log/slog"
+	"sync"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-type OrderEventHandler func(event OrderPlacedEvent)
-
-type OrderConsumer struct {
+type Consumer struct {
 	conn      *amqp.Connection
 	channel   *amqp.Channel
 	queueName string
 }
 
-func NewOrderConsumer(ctx context.Context, rabbitMQURL, queueName string) (*OrderConsumer, error) {
+func NewConsumer(ctx context.Context, cfg Config) (*Consumer, error) {
+	queueName := cfg.QueueName
 	if queueName == "" {
 		queueName = DefaultOrderQueueName
 	}
 
-	conn, err := dialRabbitMQ(ctx, rabbitMQURL)
+	conn, err := dialRabbitMQ(ctx, cfg.RabbitMQURL)
 	if err != nil {
 		return nil, err
 	}
@@ -52,14 +53,25 @@ func NewOrderConsumer(ctx context.Context, rabbitMQURL, queueName string) (*Orde
 		return nil, fmt.Errorf("set qos: %w", err)
 	}
 
-	return &OrderConsumer{
+	return &Consumer{
 		conn:      conn,
 		channel:   channel,
 		queueName: queueName,
 	}, nil
 }
 
-func (c *OrderConsumer) Run(ctx context.Context, handler OrderEventHandler) error {
+func (c *Consumer) RunInBackground(ctx context.Context, logger *slog.Logger, wg *sync.WaitGroup) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		log.Printf("order worker listening on queue %q", c.queueName)
+		if err := c.run(ctx, logger); err != nil && ctx.Err() == nil {
+			log.Printf("order consumer stopped with error: %v", err)
+		}
+	}()
+}
+
+func (c *Consumer) run(ctx context.Context, logger *slog.Logger) error {
 	deliveries, err := c.channel.Consume(
 		c.queueName,
 		"",
@@ -92,7 +104,7 @@ func (c *OrderConsumer) Run(ctx context.Context, handler OrderEventHandler) erro
 				continue
 			}
 
-			handler(event)
+			LogKitchenDisplayNotification(logger, event)
 
 			if err := delivery.Ack(false); err != nil {
 				return fmt.Errorf("ack delivery: %w", err)
@@ -101,7 +113,7 @@ func (c *OrderConsumer) Run(ctx context.Context, handler OrderEventHandler) erro
 	}
 }
 
-func (c *OrderConsumer) Close() error {
+func (c *Consumer) Close() error {
 	if c.channel != nil {
 		if err := c.channel.Close(); err != nil {
 			return err

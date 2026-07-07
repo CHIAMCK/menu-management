@@ -7,85 +7,26 @@ A Go app using [Gin](https://github.com/gin-gonic/gin) and PostgreSQL for menu m
 - Go 1.21+
 - PostgreSQL 14+
 
-## Data Model
-
-```
-user (1) ──< orders (many) >── merchant (1)
-merchant (1) ──< menus (many, only 1 ACTIVE per merchant)
-menu (1) ──< categories (many)
-category (1) ──< items (many, denormalized merchant_id)
-order (1) ──< order_items (many) >── items (many)
-```
-
-- One merchant can have many menus, but only **one active menu** at a time (enforced by partial unique index).
-- One menu has many categories; each category has many items.
-- `items.merchant_id` is denormalized for fast order validation; set it in application code from `category → menu → merchant`.
-- One order has many items via `order_items`; duplicate items in the same order are prevented by `UNIQUE (order_id, item_id)`.
-
-## Database Schema
-
-| Table         | Key columns |
-|---------------|-------------|
-| `users`       | `name`, `email` |
-| `merchants`   | `name`, `status` (ACTIVE/INACTIVE) |
-| `menus`       | `merchant_id`, `name`, `status` (ACTIVE/INACTIVE) |
-| `categories`  | `menu_id`, `name`, `status` |
-| `items`       | `merchant_id`, `category_id`, `name`, `price`, `status`, `availability` |
-| `orders`      | `user_id`, `merchant_id`, `status`, `total_amount` |
-| `order_items` | `order_id`, `item_id`, `quantity`, `unit_price` (unique per order) |
-
-Migrations live in `internal/db/migrations/` and run automatically on startup.
-
-`000002_seed_data.up.sql` loads mock merchants, users, menus, categories, items, and orders.
-
-**Merchants**
-| ID | Name | Status |
-|----|------|--------|
-| 1 | Joe's Pizza | ACTIVE |
-| 2 | Cafe Bloom | ACTIVE |
-| 3 | Sushi Zen | INACTIVE |
-
-**Users:** Alice, Bob, Carol
-
-**Menus:** Joe's Pizza has an active "Main Menu" + inactive "Winter Specials"; Cafe Bloom has "All Day Menu"
-
-**Orders:** 3 sample orders across merchants (COMPLETED, PENDING, CONFIRMED)
-
-The active menu is scoped to the merchant configured via the `MERCHANT_ID` environment variable (default `1` in Docker Compose).
-
-```bash
-curl http://localhost:8080/v1/menu
-```
-
-To reset and re-apply migrations: `docker compose down -v && docker compose up --build`
-
 ## Quick Start (Docker)
 
 ```bash
 docker compose up --build
 ```
 
-Startup order: `postgres` and `rabbitmq` start first; `app` and `worker` wait until both dependencies pass their healthchecks (`depends_on` with `condition: service_healthy`).
-
 - App: http://localhost:8080
 - PostgreSQL: `localhost:5432` (user `postgres`, password `postgres`, db `menu_management`)
 - RabbitMQ: `localhost:5672` (user `guest`, password `guest`)
 - RabbitMQ management UI: http://localhost:15672 (user `guest`, password `guest`)
-- Order worker: runs automatically as the `worker` service and logs structured kitchen-display notifications
+- Order worker: runs as a background goroutine inside the app process and logs structured kitchen-display notifications
 
 ```bash
 curl http://localhost:8080/
-curl http://localhost:8080/v1/menu
 ```
 
-Place an order and inspect worker logs:
+See [Endpoints](#endpoints) for curl examples for every API route. After placing an order, inspect app logs for the kitchen-display notification:
 
 ```bash
-curl -X POST http://localhost:8080/v1/orders \
-  -H "Content-Type: application/json" \
-  -d '{"user_id":1,"merchant_id":1,"items":[{"item_id":1,"quantity":2}]}'
-
-docker compose logs worker
+docker compose logs app
 ```
 
 Stop and remove containers:
@@ -121,7 +62,7 @@ docker run --name menu-rabbitmq \
   -d rabbitmq:3-management-alpine
 ```
 
-**3. Run the app and worker** (separate terminals):
+**3. Run the app:**
 
 ```bash
 export DATABASE_URL="postgres://postgres:postgres@localhost:5432/menu_management?sslmode=disable"
@@ -132,53 +73,83 @@ go mod tidy
 go run .
 ```
 
-```bash
-export RABBITMQ_URL="amqp://guest:guest@localhost:5672/"
-export ORDER_QUEUE_NAME="order.placed"
-go run ./cmd/worker
-```
-
-The server starts on `http://localhost:8080` (override with `PORT` env var). Set `MERCHANT_ID` to choose which merchant's active menu is served. When a new order is placed, the API publishes an `order.placed` event to RabbitMQ; the worker consumes it and logs a structured summary.
+The server starts on `http://localhost:8080` (override with `PORT` env var). Set `MERCHANT_ID` to choose which merchant's active menu is served. When a new order is placed, the API publishes an `order.placed` event to RabbitMQ; a background goroutine in the same process consumes it and logs a structured summary.
 
 ## Order Events
 
 When `POST /v1/orders` succeeds, the API publishes a durable JSON message to the `order.placed` queue (configurable via `ORDER_QUEUE_NAME`). Publishing is best-effort: if RabbitMQ is unavailable, the order is still created and the API returns `201 Created`.
 
-The worker (`cmd/worker`) consumes those messages and logs a structured JSON summary simulating a kitchen display notification.
+A background goroutine in the app process consumes those messages and logs a structured JSON summary simulating a kitchen display notification.
 
 ## Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET    | `/`  | Hello World |
+| GET    | `/` | Hello World |
 | GET    | `/v1/menu` | Active menu for the merchant configured via `MERCHANT_ID` |
 | GET    | `/v1/menu/items/{id}` | Single menu item by ID |
+| PATCH  | `/v1/menu/items/{id}` | Update item availability (`AVAILABLE` or `OUT_OF_STOCK`) |
+| POST   | `/v1/orders` | Create an order |
+| GET    | `/v1/orders/{id}` | Get order by ID |
+| PATCH  | `/v1/orders/{id}/status` | Update order status (`RECEIVED`, `PREPARING`, `READY`, or `COMPLETED`) |
 
 ```bash
+# Health check
 curl http://localhost:8080/
+
+# Menu
 curl http://localhost:8080/v1/menu
 curl http://localhost:8080/v1/menu/items/1
+
+# Update item availability
+curl -X PATCH http://localhost:8080/v1/menu/items/1 \
+  -H "Content-Type: application/json" \
+  -d '{"availability":"OUT_OF_STOCK"}'
+
+# Orders
+curl -X POST http://localhost:8080/v1/orders \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":1,"merchant_id":1,"items":[{"item_id":1,"quantity":2}]}'
+
+curl http://localhost:8080/v1/orders/1
+
+curl -X PATCH http://localhost:8080/v1/orders/1/status \
+  -H "Content-Type: application/json" \
+  -d '{"status":"PREPARING"}'
 ```
 
-## Project Structure
+## Unit Tests
 
+Run all unit tests:
+
+```bash
+go test ./...
 ```
-.
-├── main.go
-├── cmd/
-│   └── worker/           # RabbitMQ consumer for order.placed events
-├── Dockerfile
-├── docker-compose.yml
-├── internal/
-│   ├── db/
-│   │   ├── migrations/   # SQL schema migrations
-│   │   ├── postgres.go   # Connection pool
-│   │   └── migrate.go    # Migration runner
-│   ├── messaging/        # RabbitMQ publisher/consumer and order events
-│   ├── models/           # Domain structs matching DB tables
-│   ├── repository/       # Data access layer
-│   ├── service/          # Business logic layer
-│   ├── handlers/         # HTTP handlers
-│   └── routes/
-└── README.md
+
+Run tests with verbose output:
+
+```bash
+go test -v ./...
 ```
+
+## Design Questions
+
+### 1. API contract decisions
+
+What was one non-obvious design decision you made in the API surface — a naming choice, a response shape, a status code — and why did you make it?
+
+### 2. Versioning
+
+If a mobile client were already consuming `GET /menu` and you needed to change the response shape in a breaking way, how would you handle that?
+
+I will implement API versioning. Add a new endpoint, `GET /v2/menu` with the new response shape. Migrate the endpoint on mobile client to v2 on new app version, old version still calling v1. Monitor app version adoption rate and deprecate v1 when all clients have upgraded.
+
+### 3. What you'd do differently with more time
+
+Name one thing you would change or add if you had another two hours. Be specific.
+
+### 4. Production gap
+
+What is the most significant thing missing from this service that would concern you before shipping it to real users?
+
+The most significant production gap is authentication and authorization. Without authentication, anyone can place orders or access merchant APIs. Without authorization, any authenticated user could potentially modify item availability or change order status, leading to security issues.

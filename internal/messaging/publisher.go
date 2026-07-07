@@ -8,8 +8,6 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-const DefaultOrderQueueName = "order.placed"
-
 type OrderEventPublisher interface {
 	PublishOrderPlaced(ctx context.Context, event OrderPlacedEvent) error
 	Close() error
@@ -25,18 +23,19 @@ func (NoOpPublisher) Close() error {
 	return nil
 }
 
-type RabbitMQPublisher struct {
+type rabbitMQPublisher struct {
 	conn      *amqp.Connection
 	channel   *amqp.Channel
 	queueName string
 }
 
-func NewRabbitMQPublisher(ctx context.Context, rabbitMQURL, queueName string) (*RabbitMQPublisher, error) {
+func NewPublisher(ctx context.Context, cfg Config) (OrderEventPublisher, error) {
+	queueName := cfg.QueueName
 	if queueName == "" {
 		queueName = DefaultOrderQueueName
 	}
 
-	conn, err := dialRabbitMQ(ctx, rabbitMQURL)
+	conn, err := dialRabbitMQ(ctx, cfg.RabbitMQURL)
 	if err != nil {
 		return nil, err
 	}
@@ -60,14 +59,14 @@ func NewRabbitMQPublisher(ctx context.Context, rabbitMQURL, queueName string) (*
 		return nil, fmt.Errorf("declare queue %q: %w", queueName, err)
 	}
 
-	return &RabbitMQPublisher{
+	return &rabbitMQPublisher{
 		conn:      conn,
 		channel:   channel,
 		queueName: queueName,
 	}, nil
 }
 
-func (p *RabbitMQPublisher) PublishOrderPlaced(_ context.Context, event OrderPlacedEvent) error {
+func (p *rabbitMQPublisher) PublishOrderPlaced(_ context.Context, event OrderPlacedEvent) error {
 	body, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("marshal order placed event: %w", err)
@@ -90,7 +89,7 @@ func (p *RabbitMQPublisher) PublishOrderPlaced(_ context.Context, event OrderPla
 	return nil
 }
 
-func (p *RabbitMQPublisher) Close() error {
+func (p *rabbitMQPublisher) Close() error {
 	if p.channel != nil {
 		if err := p.channel.Close(); err != nil {
 			return err

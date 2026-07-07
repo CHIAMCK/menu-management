@@ -16,4 +16,5 @@ var (
 	ErrItemMerchantMismatch        = errors.New("item merchant mismatch")
 	ErrInvalidOrderStatus          = errors.New("invalid order status")
 	ErrInvalidOrderStatusTransition = errors.New("invalid order status transition")
+	ErrUserOrderLocked              = errors.New("user order locked")
 )

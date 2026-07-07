@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"menu-management/internal/dto"
+	"menu-management/internal/lock"
 	"menu-management/internal/messaging"
 	"menu-management/internal/models"
 	"menu-management/internal/repository"
@@ -136,7 +137,7 @@ func (m *mockItemRepository) UpdateItemAvailability(_ context.Context, _ int64, 
 }
 
 func TestGetOrderByID_InvalidID(t *testing.T) {
-	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{}, nil)
+	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{}, nil, nil)
 
 	for _, id := range []int64{0, -1} {
 		_, err := svc.GetOrderByID(context.Background(), id)
@@ -149,7 +150,7 @@ func TestGetOrderByID_InvalidID(t *testing.T) {
 func TestGetOrderByID_NotFound(t *testing.T) {
 	svc := NewOrderService(&mockOrderRepository{
 		orderErr: repository.ErrNotFound,
-	}, &mockItemRepository{}, nil)
+	}, &mockItemRepository{}, nil, nil)
 
 	_, err := svc.GetOrderByID(context.Background(), 99)
 	if !errors.Is(err, ErrOrderNotFound) {
@@ -161,7 +162,7 @@ func TestGetOrderByID_FindOrderError(t *testing.T) {
 	repoErr := errors.New("db down")
 	svc := NewOrderService(&mockOrderRepository{
 		orderErr: repoErr,
-	}, &mockItemRepository{}, nil)
+	}, &mockItemRepository{}, nil, nil)
 
 	_, err := svc.GetOrderByID(context.Background(), 1)
 	if err == nil || errors.Is(err, ErrOrderNotFound) {
@@ -174,7 +175,7 @@ func TestGetOrderByID_FindItemsError(t *testing.T) {
 	svc := NewOrderService(&mockOrderRepository{
 		order:    models.Order{ID: 1},
 		itemsErr: repoErr,
-	}, &mockItemRepository{}, nil)
+	}, &mockItemRepository{}, nil, nil)
 
 	_, err := svc.GetOrderByID(context.Background(), 1)
 	if err == nil {
@@ -201,7 +202,7 @@ func TestGetOrderByID_Success(t *testing.T) {
 			{ID: 2, ItemID: 4, Name: "Garlic Bread", Quantity: 1, UnitPrice: 5.99},
 		},
 	}
-	svc := NewOrderService(mockRepo, &mockItemRepository{}, nil)
+	svc := NewOrderService(mockRepo, &mockItemRepository{}, nil, nil)
 
 	got, err := svc.GetOrderByID(context.Background(), 1)
 	if err != nil {
@@ -236,7 +237,7 @@ func TestGetOrderByID_SuccessEmptyItems(t *testing.T) {
 	svc := NewOrderService(&mockOrderRepository{
 		order: models.Order{ID: 2, Status: models.OrderStatusReceived},
 		items: []repository.OrderItemWithItem{},
-	}, &mockItemRepository{}, nil)
+	}, &mockItemRepository{}, nil, nil)
 
 	got, err := svc.GetOrderByID(context.Background(), 2)
 	if err != nil {
@@ -269,7 +270,7 @@ func TestCreateOrder_PublishesOrderPlacedEvent(t *testing.T) {
 		},
 	}
 	publisher := &mockOrderEventPublisher{}
-	svc := NewOrderService(orderRepo, itemRepo, publisher)
+	svc := NewOrderService(orderRepo, itemRepo, publisher, nil)
 
 	got, err := svc.CreateOrder(context.Background(), dto.CreateOrderRequest{
 		UserID:     1,
@@ -302,7 +303,7 @@ func TestCreateOrder_Success(t *testing.T) {
 			{ID: 4, MerchantID: 1, Price: 5.99, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
 		},
 	}
-	svc := NewOrderService(orderRepo, itemRepo, nil)
+	svc := NewOrderService(orderRepo, itemRepo, nil, nil)
 
 	got, err := svc.CreateOrder(context.Background(), dto.CreateOrderRequest{
 		UserID:     1,
@@ -333,7 +334,7 @@ func TestCreateOrder_ItemNotFound(t *testing.T) {
 		items: []models.Item{
 			{ID: 1, MerchantID: 1, Price: 12.99, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
 		},
-	}, nil)
+	}, nil, nil)
 
 	_, err := svc.CreateOrder(context.Background(), dto.CreateOrderRequest{
 		UserID:     1,
@@ -353,7 +354,7 @@ func TestCreateOrder_ItemUnavailable(t *testing.T) {
 		items: []models.Item{
 			{ID: 5, MerchantID: 1, Price: 2.50, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityOutOfStock},
 		},
-	}, nil)
+	}, nil, nil)
 
 	_, err := svc.CreateOrder(context.Background(), dto.CreateOrderRequest{
 		UserID:     1,
@@ -366,7 +367,7 @@ func TestCreateOrder_ItemUnavailable(t *testing.T) {
 }
 
 func TestCreateOrder_DuplicateItem(t *testing.T) {
-	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{}, nil)
+	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{}, nil, nil)
 
 	_, err := svc.CreateOrder(context.Background(), dto.CreateOrderRequest{
 		UserID:     1,
@@ -381,12 +382,38 @@ func TestCreateOrder_DuplicateItem(t *testing.T) {
 	}
 }
 
+func TestCreateOrder_UserLocked(t *testing.T) {
+	userLocker := lock.NewInMemoryUserLocker(5 * time.Second)
+	if err := userLocker.TryLock(1); err != nil {
+		t.Fatalf("TryLock: unexpected error: %v", err)
+	}
+
+	orderRepo := &mockOrderRepository{createID: 99}
+	svc := NewOrderService(orderRepo, &mockItemRepository{
+		items: []models.Item{
+			{ID: 1, MerchantID: 1, Price: 12.99, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
+		},
+	}, nil, userLocker)
+
+	_, err := svc.CreateOrder(context.Background(), dto.CreateOrderRequest{
+		UserID:     1,
+		MerchantID: 1,
+		Items:      []dto.CreateOrderItemRequest{{ItemID: 1, Quantity: 1}},
+	})
+	if !errors.Is(err, ErrUserOrderLocked) {
+		t.Fatalf("CreateOrder: want ErrUserOrderLocked, got %v", err)
+	}
+	if orderRepo.createInput.UserID != 0 {
+		t.Fatalf("CreateOrder should not reach repository when user is locked")
+	}
+}
+
 func TestCreateOrder_ItemMerchantMismatch(t *testing.T) {
 	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{
 		items: []models.Item{
 			{ID: 7, MerchantID: 2, Price: 4.50, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
 		},
-	}, nil)
+	}, nil, nil)
 
 	_, err := svc.CreateOrder(context.Background(), dto.CreateOrderRequest{
 		UserID:     1,
@@ -399,7 +426,7 @@ func TestCreateOrder_ItemMerchantMismatch(t *testing.T) {
 }
 
 func TestUpdateOrderStatus_InvalidID(t *testing.T) {
-	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{}, nil)
+	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{}, nil, nil)
 
 	for _, id := range []int64{0, -1} {
 		_, err := svc.UpdateOrderStatus(context.Background(), id, "PREPARING")
@@ -410,7 +437,7 @@ func TestUpdateOrderStatus_InvalidID(t *testing.T) {
 }
 
 func TestUpdateOrderStatus_InvalidStatus(t *testing.T) {
-	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{}, nil)
+	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{}, nil, nil)
 
 	_, err := svc.UpdateOrderStatus(context.Background(), 1, "SHIPPED")
 	if !errors.Is(err, ErrInvalidOrderStatus) {
@@ -421,7 +448,7 @@ func TestUpdateOrderStatus_InvalidStatus(t *testing.T) {
 func TestUpdateOrderStatus_NotFound(t *testing.T) {
 	svc := NewOrderService(&mockOrderRepository{
 		orderErr: repository.ErrNotFound,
-	}, &mockItemRepository{}, nil)
+	}, &mockItemRepository{}, nil, nil)
 
 	_, err := svc.UpdateOrderStatus(context.Background(), 99, "PREPARING")
 	if !errors.Is(err, ErrOrderNotFound) {
@@ -432,7 +459,7 @@ func TestUpdateOrderStatus_NotFound(t *testing.T) {
 func TestUpdateOrderStatus_InvalidTransition(t *testing.T) {
 	svc := NewOrderService(&mockOrderRepository{
 		order: models.Order{ID: 1, Status: models.OrderStatusReceived},
-	}, &mockItemRepository{}, nil)
+	}, &mockItemRepository{}, nil, nil)
 
 	_, err := svc.UpdateOrderStatus(context.Background(), 1, "READY")
 	if !errors.Is(err, ErrInvalidOrderStatusTransition) {
@@ -443,7 +470,7 @@ func TestUpdateOrderStatus_InvalidTransition(t *testing.T) {
 func TestUpdateOrderStatus_CompletedOrder(t *testing.T) {
 	svc := NewOrderService(&mockOrderRepository{
 		order: models.Order{ID: 1, Status: models.OrderStatusCompleted},
-	}, &mockItemRepository{}, nil)
+	}, &mockItemRepository{}, nil, nil)
 
 	_, err := svc.UpdateOrderStatus(context.Background(), 1, "PREPARING")
 	if !errors.Is(err, ErrInvalidOrderStatusTransition) {
@@ -473,7 +500,7 @@ func TestUpdateOrderStatus_Success(t *testing.T) {
 			{ID: 1, ItemID: 2, Name: "Pepperoni Pizza", Quantity: 1, UnitPrice: 14.99},
 		},
 	}
-	svc := NewOrderService(orderRepo, &mockItemRepository{}, nil)
+	svc := NewOrderService(orderRepo, &mockItemRepository{}, nil, nil)
 
 	got, err := svc.UpdateOrderStatus(context.Background(), 1, "PREPARING")
 	if err != nil {

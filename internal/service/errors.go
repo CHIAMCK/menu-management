@@ -8,4 +8,6 @@ var (
 	ErrInvalidItemID            = errors.New("invalid item id")
 	ErrItemNotFound             = errors.New("item not found")
 	ErrInvalidItemAvailability  = errors.New("invalid item availability")
+	ErrInvalidOrderID           = errors.New("invalid order id")
+	ErrOrderNotFound            = errors.New("order not found")
 )

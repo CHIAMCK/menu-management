@@ -3,7 +3,7 @@ package dto
 import "time"
 
 type UpdateItemAvailabilityRequest struct {
-	Availability string `json:"availability" binding:"required"`
+	Availability string `json:"availability" binding:"required,oneof=AVAILABLE OUT_OF_STOCK"`
 }
 
 type ItemDetailResponse struct {

@@ -45,24 +45,31 @@ func (r *ItemRepository) FindItemByID(ctx context.Context, id int64) (models.Ite
 	return item, nil
 }
 
-func (r *ItemRepository) UpdateItemAvailability(ctx context.Context, id int64, availability models.ItemAvailability) error {
+func (r *ItemRepository) UpdateItemAvailability(ctx context.Context, id int64, availability models.ItemAvailability) (models.Item, error) {
 	const query = `
 		UPDATE items
 		SET availability = $1
-		WHERE id = $2`
+		WHERE id = $2
+		RETURNING id, merchant_id, name, price, status, availability, category_id, created_at, updated_at`
 
-	result, err := r.db.ExecContext(ctx, query, availability, id)
+	var item models.Item
+	err := r.db.QueryRowContext(ctx, query, availability, id).Scan(
+		&item.ID,
+		&item.MerchantID,
+		&item.Name,
+		&item.Price,
+		&item.Status,
+		&item.Availability,
+		&item.CategoryID,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.Item{}, ErrNotFound
+	}
 	if err != nil {
-		return fmt.Errorf("update item availability: %w", err)
+		return models.Item{}, fmt.Errorf("update item availability: %w", err)
 	}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("update item availability rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return ErrNotFound
-	}
-
-	return nil
+	return item, nil
 }

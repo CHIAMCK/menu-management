@@ -51,7 +51,7 @@ func (h *ItemHandler) UpdateItemAvailability(c *gin.Context) {
 
 	var req dto.UpdateItemAvailabilityRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "availability is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "availability must be AVAILABLE or OUT_OF_STOCK"})
 		return
 	}
 

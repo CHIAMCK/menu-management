@@ -12,7 +12,7 @@ import (
 
 type ItemRepository interface {
 	FindItemByID(ctx context.Context, id int64) (models.Item, error)
-	UpdateItemAvailability(ctx context.Context, id int64, availability models.ItemAvailability) error
+	UpdateItemAvailability(ctx context.Context, id int64, availability models.ItemAvailability) (models.Item, error)
 }
 
 type ItemService struct {
@@ -51,7 +51,7 @@ func (s *ItemService) UpdateItemAvailability(ctx context.Context, id int64, avai
 		return dto.ItemDetailResponse{}, ErrInvalidItemAvailability
 	}
 
-	err := s.itemRepo.UpdateItemAvailability(ctx, id, itemAvailability)
+	item, err := s.itemRepo.UpdateItemAvailability(ctx, id, itemAvailability)
 	if err != nil {
 		switch {
 		case errors.Is(err, repository.ErrNotFound):
@@ -59,11 +59,6 @@ func (s *ItemService) UpdateItemAvailability(ctx context.Context, id int64, avai
 		default:
 			return dto.ItemDetailResponse{}, fmt.Errorf("update item availability: %w", err)
 		}
-	}
-
-	item, err := s.itemRepo.FindItemByID(ctx, id)
-	if err != nil {
-		return dto.ItemDetailResponse{}, fmt.Errorf("get updated item: %w", err)
 	}
 
 	return toItemDetailResponse(item), nil

@@ -1,0 +1,88 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+
+	"menu-management/internal/models"
+)
+
+type OrderItemWithItem struct {
+	ID        int64
+	ItemID    int64
+	Name      string
+	Quantity  int
+	UnitPrice float64
+}
+
+type OrderRepository struct {
+	db *sql.DB
+}
+
+func NewOrderRepository(db *sql.DB) *OrderRepository {
+	return &OrderRepository{db: db}
+}
+
+func (r *OrderRepository) FindOrderByID(ctx context.Context, id int64) (models.Order, error) {
+	const query = `
+		SELECT id, user_id, merchant_id, status, total_amount, created_at, updated_at
+		FROM orders
+		WHERE id = $1`
+
+	var order models.Order
+	err := r.db.QueryRowContext(ctx, query, id).Scan(
+		&order.ID,
+		&order.UserID,
+		&order.MerchantID,
+		&order.Status,
+		&order.TotalAmount,
+		&order.CreatedAt,
+		&order.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.Order{}, ErrNotFound
+	}
+	if err != nil {
+		return models.Order{}, fmt.Errorf("find order: %w", err)
+	}
+
+	return order, nil
+}
+
+func (r *OrderRepository) FindOrderItemsByOrderID(ctx context.Context, orderID int64) ([]OrderItemWithItem, error) {
+	const query = `
+		SELECT oi.id, oi.item_id, oi.quantity, oi.unit_price, i.name
+		FROM order_items oi
+		JOIN items i ON oi.item_id = i.id
+		WHERE oi.order_id = $1
+		ORDER BY oi.id`
+
+	rows, err := r.db.QueryContext(ctx, query, orderID)
+	if err != nil {
+		return nil, fmt.Errorf("find order items: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]OrderItemWithItem, 0)
+	for rows.Next() {
+		var item OrderItemWithItem
+		if err := rows.Scan(
+			&item.ID,
+			&item.ItemID,
+			&item.Quantity,
+			&item.UnitPrice,
+			&item.Name,
+		); err != nil {
+			return nil, fmt.Errorf("scan order item: %w", err)
+		}
+		items = append(items, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate order items: %w", err)
+	}
+
+	return items, nil
+}

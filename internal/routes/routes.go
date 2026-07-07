@@ -27,7 +27,7 @@ func Setup(db *sql.DB) *gin.Engine {
 	itemHandler := handlers.NewItemHandler(itemService)
 
 	orderRepo := repository.NewOrderRepository(db)
-	orderService := service.NewOrderService(orderRepo)
+	orderService := service.NewOrderService(orderRepo, itemRepo)
 	orderHandler := handlers.NewOrderHandler(orderService)
 
 	v1 := r.Group("/v1")
@@ -35,6 +35,7 @@ func Setup(db *sql.DB) *gin.Engine {
 		v1.GET("/menu", menuHandler.GetActiveMenu)
 		v1.GET("/menu/items/:id", itemHandler.GetItem)
 		v1.PATCH("/menu/items/:id", itemHandler.UpdateItemAvailability)
+		v1.POST("/orders", orderHandler.CreateOrder)
 		v1.GET("/orders/:id", orderHandler.GetOrder)
 	}
 

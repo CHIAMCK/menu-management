@@ -17,6 +17,19 @@ type OrderItemWithItem struct {
 	UnitPrice float64
 }
 
+type CreateOrderInput struct {
+	UserID      int64
+	MerchantID  int64
+	TotalAmount float64
+	Items       []CreateOrderItemInput
+}
+
+type CreateOrderItemInput struct {
+	ItemID    int64
+	Quantity  int
+	UnitPrice float64
+}
+
 type OrderRepository struct {
 	db *sql.DB
 }
@@ -85,4 +98,46 @@ func (r *OrderRepository) FindOrderItemsByOrderID(ctx context.Context, orderID i
 	}
 
 	return items, nil
+}
+
+func (r *OrderRepository) CreateOrder(ctx context.Context, input CreateOrderInput) (int64, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin create order tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	const insertOrderQuery = `
+		INSERT INTO orders (user_id, merchant_id, status, total_amount)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id`
+
+	var orderID int64
+	err = tx.QueryRowContext(
+		ctx,
+		insertOrderQuery,
+		input.UserID,
+		input.MerchantID,
+		models.OrderStatusPending,
+		input.TotalAmount,
+	).Scan(&orderID)
+	if err != nil {
+		return 0, fmt.Errorf("insert order: %w", err)
+	}
+
+	const insertOrderItemQuery = `
+		INSERT INTO order_items (order_id, item_id, quantity, unit_price)
+		VALUES ($1, $2, $3, $4)`
+
+	for _, item := range input.Items {
+		if _, err := tx.ExecContext(ctx, insertOrderItemQuery, orderID, item.ItemID, item.Quantity, item.UnitPrice); err != nil {
+			return 0, fmt.Errorf("insert order item: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit create order tx: %w", err)
+	}
+
+	return orderID, nil
 }

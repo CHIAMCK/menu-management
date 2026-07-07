@@ -10,4 +10,8 @@ var (
 	ErrInvalidItemAvailability  = errors.New("invalid item availability")
 	ErrInvalidOrderID           = errors.New("invalid order id")
 	ErrOrderNotFound            = errors.New("order not found")
+	ErrInvalidOrderRequest      = errors.New("invalid order request")
+	ErrDuplicateOrderItem       = errors.New("duplicate order item")
+	ErrItemUnavailable          = errors.New("item unavailable")
+	ErrItemMerchantMismatch     = errors.New("item merchant mismatch")
 )

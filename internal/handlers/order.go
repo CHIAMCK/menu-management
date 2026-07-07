@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"menu-management/internal/dto"
 	"menu-management/internal/service"
 )
 
@@ -39,4 +40,33 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, order)
+}
+
+func (h *OrderHandler) CreateOrder(c *gin.Context) {
+	var req dto.CreateOrderRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	order, err := h.orderService.CreateOrder(c.Request.Context(), req)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidOrderRequest):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid order request"})
+		case errors.Is(err, service.ErrDuplicateOrderItem):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "duplicate item in order"})
+		case errors.Is(err, service.ErrItemNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "item not found"})
+		case errors.Is(err, service.ErrItemUnavailable):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "item unavailable"})
+		case errors.Is(err, service.ErrItemMerchantMismatch):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "item does not belong to merchant"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create order"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusCreated, order)
 }

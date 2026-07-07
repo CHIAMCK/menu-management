@@ -6,23 +6,38 @@ import (
 	"testing"
 	"time"
 
+	"menu-management/internal/dto"
 	"menu-management/internal/models"
 	"menu-management/internal/repository"
 )
 
 type mockOrderRepository struct {
-	order      models.Order
-	orderErr   error
-	items      []repository.OrderItemWithItem
-	itemsErr   error
-	orderID    int64
-	itemsForID int64
+	order       models.Order
+	orderErr    error
+	items       []repository.OrderItemWithItem
+	itemsErr    error
+	orderID     int64
+	itemsForID  int64
+	createInput repository.CreateOrderInput
+	createID    int64
+	createErr   error
 }
 
 func (m *mockOrderRepository) FindOrderByID(_ context.Context, id int64) (models.Order, error) {
 	m.orderID = id
 	if m.orderErr != nil {
 		return models.Order{}, m.orderErr
+	}
+	if m.order.ID == 0 && m.createID != 0 && id == m.createID {
+		return models.Order{
+			ID:          m.createID,
+			UserID:      m.createInput.UserID,
+			MerchantID:  m.createInput.MerchantID,
+			Status:      models.OrderStatusPending,
+			TotalAmount: m.createInput.TotalAmount,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}, nil
 	}
 	return m.order, nil
 }
@@ -32,11 +47,75 @@ func (m *mockOrderRepository) FindOrderItemsByOrderID(_ context.Context, orderID
 	if m.itemsErr != nil {
 		return nil, m.itemsErr
 	}
+	if len(m.items) > 0 {
+		return m.items, nil
+	}
+	if m.createID != 0 && orderID == m.createID {
+		items := make([]repository.OrderItemWithItem, 0, len(m.createInput.Items))
+		for i, item := range m.createInput.Items {
+			items = append(items, repository.OrderItemWithItem{
+				ID:        int64(i + 1),
+				ItemID:    item.ItemID,
+				Name:      "Item",
+				Quantity:  item.Quantity,
+				UnitPrice: item.UnitPrice,
+			})
+		}
+		return items, nil
+	}
 	return m.items, nil
 }
 
+func (m *mockOrderRepository) CreateOrder(_ context.Context, input repository.CreateOrderInput) (int64, error) {
+	m.createInput = input
+	if m.createErr != nil {
+		return 0, m.createErr
+	}
+	if m.createID == 0 {
+		m.createID = 99
+	}
+	return m.createID, nil
+}
+
+type mockItemRepository struct {
+	items    []models.Item
+	itemsErr error
+}
+
+func (m *mockItemRepository) FindItemByID(_ context.Context, id int64) (models.Item, error) {
+	for _, item := range m.items {
+		if item.ID == id {
+			return item, nil
+		}
+	}
+	return models.Item{}, repository.ErrNotFound
+}
+
+func (m *mockItemRepository) FindItemsByIDs(_ context.Context, ids []int64) ([]models.Item, error) {
+	if m.itemsErr != nil {
+		return nil, m.itemsErr
+	}
+
+	itemsByID := make(map[int64]models.Item, len(m.items))
+	for _, item := range m.items {
+		itemsByID[item.ID] = item
+	}
+
+	found := make([]models.Item, 0, len(ids))
+	for _, id := range ids {
+		if item, ok := itemsByID[id]; ok {
+			found = append(found, item)
+		}
+	}
+	return found, nil
+}
+
+func (m *mockItemRepository) UpdateItemAvailability(_ context.Context, _ int64, _ models.ItemAvailability) (models.Item, error) {
+	return models.Item{}, errors.New("not implemented")
+}
+
 func TestGetOrderByID_InvalidID(t *testing.T) {
-	svc := NewOrderService(&mockOrderRepository{})
+	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{})
 
 	for _, id := range []int64{0, -1} {
 		_, err := svc.GetOrderByID(context.Background(), id)
@@ -49,7 +128,7 @@ func TestGetOrderByID_InvalidID(t *testing.T) {
 func TestGetOrderByID_NotFound(t *testing.T) {
 	svc := NewOrderService(&mockOrderRepository{
 		orderErr: repository.ErrNotFound,
-	})
+	}, &mockItemRepository{})
 
 	_, err := svc.GetOrderByID(context.Background(), 99)
 	if !errors.Is(err, ErrOrderNotFound) {
@@ -61,7 +140,7 @@ func TestGetOrderByID_FindOrderError(t *testing.T) {
 	repoErr := errors.New("db down")
 	svc := NewOrderService(&mockOrderRepository{
 		orderErr: repoErr,
-	})
+	}, &mockItemRepository{})
 
 	_, err := svc.GetOrderByID(context.Background(), 1)
 	if err == nil || errors.Is(err, ErrOrderNotFound) {
@@ -72,9 +151,9 @@ func TestGetOrderByID_FindOrderError(t *testing.T) {
 func TestGetOrderByID_FindItemsError(t *testing.T) {
 	repoErr := errors.New("db down")
 	svc := NewOrderService(&mockOrderRepository{
-		order: models.Order{ID: 1},
+		order:    models.Order{ID: 1},
 		itemsErr: repoErr,
-	})
+	}, &mockItemRepository{})
 
 	_, err := svc.GetOrderByID(context.Background(), 1)
 	if err == nil {
@@ -101,7 +180,7 @@ func TestGetOrderByID_Success(t *testing.T) {
 			{ID: 2, ItemID: 4, Name: "Garlic Bread", Quantity: 1, UnitPrice: 5.99},
 		},
 	}
-	svc := NewOrderService(mockRepo)
+	svc := NewOrderService(mockRepo, &mockItemRepository{})
 
 	got, err := svc.GetOrderByID(context.Background(), 1)
 	if err != nil {
@@ -136,7 +215,7 @@ func TestGetOrderByID_SuccessEmptyItems(t *testing.T) {
 	svc := NewOrderService(&mockOrderRepository{
 		order: models.Order{ID: 2, Status: models.OrderStatusPending},
 		items: []repository.OrderItemWithItem{},
-	})
+	}, &mockItemRepository{})
 
 	got, err := svc.GetOrderByID(context.Background(), 2)
 	if err != nil {
@@ -144,5 +223,109 @@ func TestGetOrderByID_SuccessEmptyItems(t *testing.T) {
 	}
 	if got.Items == nil || len(got.Items) != 0 {
 		t.Fatalf("Items = %v, want empty slice", got.Items)
+	}
+}
+
+func TestCreateOrder_Success(t *testing.T) {
+	orderRepo := &mockOrderRepository{createID: 99}
+	itemRepo := &mockItemRepository{
+		items: []models.Item{
+			{ID: 1, MerchantID: 1, Price: 12.99, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
+			{ID: 4, MerchantID: 1, Price: 5.99, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
+		},
+	}
+	svc := NewOrderService(orderRepo, itemRepo)
+
+	got, err := svc.CreateOrder(context.Background(), dto.CreateOrderRequest{
+		UserID:     1,
+		MerchantID: 1,
+		Items: []dto.CreateOrderItemRequest{
+			{ItemID: 1, Quantity: 2},
+			{ItemID: 4, Quantity: 1},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateOrder: unexpected error: %v", err)
+	}
+
+	wantTotal := 12.99*2 + 5.99
+	if orderRepo.createInput.TotalAmount != wantTotal {
+		t.Fatalf("TotalAmount = %v, want %v", orderRepo.createInput.TotalAmount, wantTotal)
+	}
+	if got.ID != 99 || got.Status != "PENDING" || got.TotalAmount != wantTotal {
+		t.Fatalf("unexpected order: %+v", got)
+	}
+	if len(got.Items) != 2 {
+		t.Fatalf("len(Items) = %d, want 2", len(got.Items))
+	}
+}
+
+func TestCreateOrder_ItemNotFound(t *testing.T) {
+	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{
+		items: []models.Item{
+			{ID: 1, MerchantID: 1, Price: 12.99, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
+		},
+	})
+
+	_, err := svc.CreateOrder(context.Background(), dto.CreateOrderRequest{
+		UserID:     1,
+		MerchantID: 1,
+		Items: []dto.CreateOrderItemRequest{
+			{ItemID: 1, Quantity: 1},
+			{ItemID: 99, Quantity: 1},
+		},
+	})
+	if !errors.Is(err, ErrItemNotFound) {
+		t.Fatalf("CreateOrder: want ErrItemNotFound, got %v", err)
+	}
+}
+
+func TestCreateOrder_ItemUnavailable(t *testing.T) {
+	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{
+		items: []models.Item{
+			{ID: 5, MerchantID: 1, Price: 2.50, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityOutOfStock},
+		},
+	})
+
+	_, err := svc.CreateOrder(context.Background(), dto.CreateOrderRequest{
+		UserID:     1,
+		MerchantID: 1,
+		Items:      []dto.CreateOrderItemRequest{{ItemID: 5, Quantity: 1}},
+	})
+	if !errors.Is(err, ErrItemUnavailable) {
+		t.Fatalf("CreateOrder: want ErrItemUnavailable, got %v", err)
+	}
+}
+
+func TestCreateOrder_DuplicateItem(t *testing.T) {
+	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{})
+
+	_, err := svc.CreateOrder(context.Background(), dto.CreateOrderRequest{
+		UserID:     1,
+		MerchantID: 1,
+		Items: []dto.CreateOrderItemRequest{
+			{ItemID: 1, Quantity: 1},
+			{ItemID: 1, Quantity: 2},
+		},
+	})
+	if !errors.Is(err, ErrDuplicateOrderItem) {
+		t.Fatalf("CreateOrder: want ErrDuplicateOrderItem, got %v", err)
+	}
+}
+
+func TestCreateOrder_ItemMerchantMismatch(t *testing.T) {
+	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{
+		items: []models.Item{
+			{ID: 7, MerchantID: 2, Price: 4.50, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
+		},
+	})
+
+	_, err := svc.CreateOrder(context.Background(), dto.CreateOrderRequest{
+		UserID:     1,
+		MerchantID: 1,
+		Items:      []dto.CreateOrderItemRequest{{ItemID: 7, Quantity: 1}},
+	})
+	if !errors.Is(err, ErrItemMerchantMismatch) {
+		t.Fatalf("CreateOrder: want ErrItemMerchantMismatch, got %v", err)
 	}
 }

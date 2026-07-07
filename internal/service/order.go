@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"menu-management/internal/dto"
+	"menu-management/internal/messaging"
 	"menu-management/internal/models"
 	"menu-management/internal/repository"
 )
@@ -20,12 +22,18 @@ type OrderRepository interface {
 type OrderService struct {
 	orderRepo OrderRepository
 	itemRepo  ItemRepository
+	publisher messaging.OrderEventPublisher
 }
 
-func NewOrderService(orderRepo OrderRepository, itemRepo ItemRepository) *OrderService {
+func NewOrderService(orderRepo OrderRepository, itemRepo ItemRepository, publisher messaging.OrderEventPublisher) *OrderService {
+	if publisher == nil {
+		publisher = messaging.NoOpPublisher{}
+	}
+
 	return &OrderService{
 		orderRepo: orderRepo,
 		itemRepo:  itemRepo,
+		publisher: publisher,
 	}
 }
 
@@ -83,7 +91,16 @@ func (s *OrderService) CreateOrder(ctx context.Context, req dto.CreateOrderReque
 		return dto.OrderDetailResponse{}, fmt.Errorf("create order: %w", err)
 	}
 
-	return s.GetOrderByID(ctx, orderID)
+	order, err := s.GetOrderByID(ctx, orderID)
+	if err != nil {
+		return dto.OrderDetailResponse{}, err
+	}
+
+	if err := s.publisher.PublishOrderPlaced(ctx, messaging.FromOrderDetail(order)); err != nil {
+		slog.Warn("failed to publish order.placed event", "order_id", order.OrderID, "error", err)
+	}
+
+	return order, nil
 }
 
 func validateCreateOrderRequest(req dto.CreateOrderRequest) error {

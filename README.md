@@ -65,12 +65,27 @@ To reset and re-apply migrations: `docker compose down -v && docker compose up -
 docker compose up --build
 ```
 
+Startup order: `postgres` and `rabbitmq` start first; `app` and `worker` wait until both dependencies pass their healthchecks (`depends_on` with `condition: service_healthy`).
+
 - App: http://localhost:8080
 - PostgreSQL: `localhost:5432` (user `postgres`, password `postgres`, db `menu_management`)
+- RabbitMQ: `localhost:5672` (user `guest`, password `guest`)
+- RabbitMQ management UI: http://localhost:15672 (user `guest`, password `guest`)
+- Order worker: runs automatically as the `worker` service and logs structured kitchen-display notifications
 
 ```bash
 curl http://localhost:8080/
 curl http://localhost:8080/v1/menu
+```
+
+Place an order and inspect worker logs:
+
+```bash
+curl -X POST http://localhost:8080/v1/orders \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":1,"merchant_id":1,"items":[{"item_id":1,"quantity":2}]}'
+
+docker compose logs worker
 ```
 
 Stop and remove containers:
@@ -97,16 +112,39 @@ docker run --name menu-pg \
   -d postgres:16
 ```
 
-**2. Run the app:**
+**2. Start RabbitMQ** (example with Docker):
+
+```bash
+docker run --name menu-rabbitmq \
+  -p 5672:5672 \
+  -p 15672:15672 \
+  -d rabbitmq:3-management-alpine
+```
+
+**3. Run the app and worker** (separate terminals):
 
 ```bash
 export DATABASE_URL="postgres://postgres:postgres@localhost:5432/menu_management?sslmode=disable"
+export RABBITMQ_URL="amqp://guest:guest@localhost:5672/"
+export ORDER_QUEUE_NAME="order.placed"
 export MERCHANT_ID=1
 go mod tidy
 go run .
 ```
 
-The server starts on `http://localhost:8080` (override with `PORT` env var). Set `MERCHANT_ID` to choose which merchant's active menu is served.
+```bash
+export RABBITMQ_URL="amqp://guest:guest@localhost:5672/"
+export ORDER_QUEUE_NAME="order.placed"
+go run ./cmd/worker
+```
+
+The server starts on `http://localhost:8080` (override with `PORT` env var). Set `MERCHANT_ID` to choose which merchant's active menu is served. When a new order is placed, the API publishes an `order.placed` event to RabbitMQ; the worker consumes it and logs a structured summary.
+
+## Order Events
+
+When `POST /v1/orders` succeeds, the API publishes a durable JSON message to the `order.placed` queue (configurable via `ORDER_QUEUE_NAME`). Publishing is best-effort: if RabbitMQ is unavailable, the order is still created and the API returns `201 Created`.
+
+The worker (`cmd/worker`) consumes those messages and logs a structured JSON summary simulating a kitchen display notification.
 
 ## Endpoints
 
@@ -127,6 +165,8 @@ curl http://localhost:8080/v1/menu/items/1
 ```
 .
 ├── main.go
+├── cmd/
+│   └── worker/           # RabbitMQ consumer for order.placed events
 ├── Dockerfile
 ├── docker-compose.yml
 ├── internal/
@@ -134,6 +174,7 @@ curl http://localhost:8080/v1/menu/items/1
 │   │   ├── migrations/   # SQL schema migrations
 │   │   ├── postgres.go   # Connection pool
 │   │   └── migrate.go    # Migration runner
+│   ├── messaging/        # RabbitMQ publisher/consumer and order events
 │   ├── models/           # Domain structs matching DB tables
 │   ├── repository/       # Data access layer
 │   ├── service/          # Business logic layer

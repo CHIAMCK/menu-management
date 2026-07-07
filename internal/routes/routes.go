@@ -7,11 +7,12 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"menu-management/internal/handlers"
+	"menu-management/internal/messaging"
 	"menu-management/internal/repository"
 	"menu-management/internal/service"
 )
 
-func Setup(db *sql.DB) *gin.Engine {
+func Setup(db *sql.DB, publisher messaging.OrderEventPublisher) *gin.Engine {
 	r := gin.Default()
 
 	r.GET("/", func(c *gin.Context) {
@@ -27,7 +28,7 @@ func Setup(db *sql.DB) *gin.Engine {
 	itemHandler := handlers.NewItemHandler(itemService)
 
 	orderRepo := repository.NewOrderRepository(db)
-	orderService := service.NewOrderService(orderRepo, itemRepo)
+	orderService := service.NewOrderService(orderRepo, itemRepo, publisher)
 	orderHandler := handlers.NewOrderHandler(orderService)
 
 	v1 := r.Group("/v1")

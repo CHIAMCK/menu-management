@@ -139,7 +139,7 @@ func (m *mockItemRepository) UpdateItemAvailability(_ context.Context, _ int64, 
 
 func setupOrderRouter(orderRepo *mockOrderRepository, itemRepo *mockItemRepository) *gin.Engine {
 	gin.SetMode(gin.TestMode)
-	svc := service.NewOrderService(orderRepo, itemRepo)
+	svc := service.NewOrderService(orderRepo, itemRepo, nil)
 	handler := NewOrderHandler(svc)
 
 	r := gin.New()

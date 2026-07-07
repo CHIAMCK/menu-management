@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"menu-management/internal/dto"
+	"menu-management/internal/messaging"
 	"menu-management/internal/models"
 	"menu-management/internal/repository"
 )
@@ -135,7 +136,7 @@ func (m *mockItemRepository) UpdateItemAvailability(_ context.Context, _ int64, 
 }
 
 func TestGetOrderByID_InvalidID(t *testing.T) {
-	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{})
+	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{}, nil)
 
 	for _, id := range []int64{0, -1} {
 		_, err := svc.GetOrderByID(context.Background(), id)
@@ -148,7 +149,7 @@ func TestGetOrderByID_InvalidID(t *testing.T) {
 func TestGetOrderByID_NotFound(t *testing.T) {
 	svc := NewOrderService(&mockOrderRepository{
 		orderErr: repository.ErrNotFound,
-	}, &mockItemRepository{})
+	}, &mockItemRepository{}, nil)
 
 	_, err := svc.GetOrderByID(context.Background(), 99)
 	if !errors.Is(err, ErrOrderNotFound) {
@@ -160,7 +161,7 @@ func TestGetOrderByID_FindOrderError(t *testing.T) {
 	repoErr := errors.New("db down")
 	svc := NewOrderService(&mockOrderRepository{
 		orderErr: repoErr,
-	}, &mockItemRepository{})
+	}, &mockItemRepository{}, nil)
 
 	_, err := svc.GetOrderByID(context.Background(), 1)
 	if err == nil || errors.Is(err, ErrOrderNotFound) {
@@ -173,7 +174,7 @@ func TestGetOrderByID_FindItemsError(t *testing.T) {
 	svc := NewOrderService(&mockOrderRepository{
 		order:    models.Order{ID: 1},
 		itemsErr: repoErr,
-	}, &mockItemRepository{})
+	}, &mockItemRepository{}, nil)
 
 	_, err := svc.GetOrderByID(context.Background(), 1)
 	if err == nil {
@@ -200,7 +201,7 @@ func TestGetOrderByID_Success(t *testing.T) {
 			{ID: 2, ItemID: 4, Name: "Garlic Bread", Quantity: 1, UnitPrice: 5.99},
 		},
 	}
-	svc := NewOrderService(mockRepo, &mockItemRepository{})
+	svc := NewOrderService(mockRepo, &mockItemRepository{}, nil)
 
 	got, err := svc.GetOrderByID(context.Background(), 1)
 	if err != nil {
@@ -235,7 +236,7 @@ func TestGetOrderByID_SuccessEmptyItems(t *testing.T) {
 	svc := NewOrderService(&mockOrderRepository{
 		order: models.Order{ID: 2, Status: models.OrderStatusReceived},
 		items: []repository.OrderItemWithItem{},
-	}, &mockItemRepository{})
+	}, &mockItemRepository{}, nil)
 
 	got, err := svc.GetOrderByID(context.Background(), 2)
 	if err != nil {
@@ -243,6 +244,53 @@ func TestGetOrderByID_SuccessEmptyItems(t *testing.T) {
 	}
 	if got.Items == nil || len(got.Items) != 0 {
 		t.Fatalf("Items = %v, want empty slice", got.Items)
+	}
+}
+
+type mockOrderEventPublisher struct {
+	event   messaging.OrderPlacedEvent
+	publishErr error
+}
+
+func (m *mockOrderEventPublisher) PublishOrderPlaced(_ context.Context, event messaging.OrderPlacedEvent) error {
+	m.event = event
+	return m.publishErr
+}
+
+func (m *mockOrderEventPublisher) Close() error {
+	return nil
+}
+
+func TestCreateOrder_PublishesOrderPlacedEvent(t *testing.T) {
+	orderRepo := &mockOrderRepository{createID: 99}
+	itemRepo := &mockItemRepository{
+		items: []models.Item{
+			{ID: 1, MerchantID: 1, Price: 12.99, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
+		},
+	}
+	publisher := &mockOrderEventPublisher{}
+	svc := NewOrderService(orderRepo, itemRepo, publisher)
+
+	got, err := svc.CreateOrder(context.Background(), dto.CreateOrderRequest{
+		UserID:     1,
+		MerchantID: 1,
+		Items:      []dto.CreateOrderItemRequest{{ItemID: 1, Quantity: 2}},
+	})
+	if err != nil {
+		t.Fatalf("CreateOrder: unexpected error: %v", err)
+	}
+
+	if publisher.event.OrderID != got.OrderID {
+		t.Fatalf("published OrderID = %d, want %d", publisher.event.OrderID, got.OrderID)
+	}
+	if publisher.event.UserID != 1 || publisher.event.MerchantID != 1 {
+		t.Fatalf("unexpected published order fields: %+v", publisher.event)
+	}
+	if publisher.event.Status != "RECEIVED" {
+		t.Fatalf("published Status = %q, want RECEIVED", publisher.event.Status)
+	}
+	if len(publisher.event.Items) != 1 || publisher.event.Items[0].Quantity != 2 {
+		t.Fatalf("unexpected published items: %+v", publisher.event.Items)
 	}
 }
 
@@ -254,7 +302,7 @@ func TestCreateOrder_Success(t *testing.T) {
 			{ID: 4, MerchantID: 1, Price: 5.99, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
 		},
 	}
-	svc := NewOrderService(orderRepo, itemRepo)
+	svc := NewOrderService(orderRepo, itemRepo, nil)
 
 	got, err := svc.CreateOrder(context.Background(), dto.CreateOrderRequest{
 		UserID:     1,
@@ -285,7 +333,7 @@ func TestCreateOrder_ItemNotFound(t *testing.T) {
 		items: []models.Item{
 			{ID: 1, MerchantID: 1, Price: 12.99, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
 		},
-	})
+	}, nil)
 
 	_, err := svc.CreateOrder(context.Background(), dto.CreateOrderRequest{
 		UserID:     1,
@@ -305,7 +353,7 @@ func TestCreateOrder_ItemUnavailable(t *testing.T) {
 		items: []models.Item{
 			{ID: 5, MerchantID: 1, Price: 2.50, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityOutOfStock},
 		},
-	})
+	}, nil)
 
 	_, err := svc.CreateOrder(context.Background(), dto.CreateOrderRequest{
 		UserID:     1,
@@ -318,7 +366,7 @@ func TestCreateOrder_ItemUnavailable(t *testing.T) {
 }
 
 func TestCreateOrder_DuplicateItem(t *testing.T) {
-	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{})
+	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{}, nil)
 
 	_, err := svc.CreateOrder(context.Background(), dto.CreateOrderRequest{
 		UserID:     1,
@@ -338,7 +386,7 @@ func TestCreateOrder_ItemMerchantMismatch(t *testing.T) {
 		items: []models.Item{
 			{ID: 7, MerchantID: 2, Price: 4.50, Status: models.ItemStatusActive, Availability: models.ItemAvailabilityAvailable},
 		},
-	})
+	}, nil)
 
 	_, err := svc.CreateOrder(context.Background(), dto.CreateOrderRequest{
 		UserID:     1,
@@ -351,7 +399,7 @@ func TestCreateOrder_ItemMerchantMismatch(t *testing.T) {
 }
 
 func TestUpdateOrderStatus_InvalidID(t *testing.T) {
-	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{})
+	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{}, nil)
 
 	for _, id := range []int64{0, -1} {
 		_, err := svc.UpdateOrderStatus(context.Background(), id, "PREPARING")
@@ -362,7 +410,7 @@ func TestUpdateOrderStatus_InvalidID(t *testing.T) {
 }
 
 func TestUpdateOrderStatus_InvalidStatus(t *testing.T) {
-	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{})
+	svc := NewOrderService(&mockOrderRepository{}, &mockItemRepository{}, nil)
 
 	_, err := svc.UpdateOrderStatus(context.Background(), 1, "SHIPPED")
 	if !errors.Is(err, ErrInvalidOrderStatus) {
@@ -373,7 +421,7 @@ func TestUpdateOrderStatus_InvalidStatus(t *testing.T) {
 func TestUpdateOrderStatus_NotFound(t *testing.T) {
 	svc := NewOrderService(&mockOrderRepository{
 		orderErr: repository.ErrNotFound,
-	}, &mockItemRepository{})
+	}, &mockItemRepository{}, nil)
 
 	_, err := svc.UpdateOrderStatus(context.Background(), 99, "PREPARING")
 	if !errors.Is(err, ErrOrderNotFound) {
@@ -384,7 +432,7 @@ func TestUpdateOrderStatus_NotFound(t *testing.T) {
 func TestUpdateOrderStatus_InvalidTransition(t *testing.T) {
 	svc := NewOrderService(&mockOrderRepository{
 		order: models.Order{ID: 1, Status: models.OrderStatusReceived},
-	}, &mockItemRepository{})
+	}, &mockItemRepository{}, nil)
 
 	_, err := svc.UpdateOrderStatus(context.Background(), 1, "READY")
 	if !errors.Is(err, ErrInvalidOrderStatusTransition) {
@@ -395,7 +443,7 @@ func TestUpdateOrderStatus_InvalidTransition(t *testing.T) {
 func TestUpdateOrderStatus_CompletedOrder(t *testing.T) {
 	svc := NewOrderService(&mockOrderRepository{
 		order: models.Order{ID: 1, Status: models.OrderStatusCompleted},
-	}, &mockItemRepository{})
+	}, &mockItemRepository{}, nil)
 
 	_, err := svc.UpdateOrderStatus(context.Background(), 1, "PREPARING")
 	if !errors.Is(err, ErrInvalidOrderStatusTransition) {
@@ -425,7 +473,7 @@ func TestUpdateOrderStatus_Success(t *testing.T) {
 			{ID: 1, ItemID: 2, Name: "Pepperoni Pizza", Quantity: 1, UnitPrice: 14.99},
 		},
 	}
-	svc := NewOrderService(orderRepo, &mockItemRepository{})
+	svc := NewOrderService(orderRepo, &mockItemRepository{}, nil)
 
 	got, err := svc.UpdateOrderStatus(context.Background(), 1, "PREPARING")
 	if err != nil {

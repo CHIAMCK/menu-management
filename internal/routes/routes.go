@@ -1,10 +1,10 @@
 package routes
 
 import (
-	"database/sql"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"menu-management/internal/handlers"
 	"menu-management/internal/lock"
@@ -13,7 +13,7 @@ import (
 	"menu-management/internal/service"
 )
 
-func Setup(db *sql.DB, publisher messaging.OrderEventPublisher, userLocker lock.UserLocker) *gin.Engine {
+func Setup(db *gorm.DB, publisher messaging.OrderEventPublisher, userLocker lock.UserLocker) *gin.Engine {
 	r := gin.Default()
 
 	r.GET("/", func(c *gin.Context) {

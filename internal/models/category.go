@@ -10,10 +10,14 @@ const (
 )
 
 type Category struct {
-	ID        int64          `json:"id" db:"id"`
+	ID        int64          `json:"id" db:"id" gorm:"primaryKey"`
 	Name      string         `json:"name" db:"name"`
 	MenuID    int64          `json:"menu_id" db:"menu_id"`
-	Status    CategoryStatus `json:"status" db:"status"`
+	Status    CategoryStatus `json:"status" db:"status" gorm:"type:category_status"`
 	CreatedAt time.Time      `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at" db:"updated_at"`
+}
+
+func (Category) TableName() string {
+	return "categories"
 }

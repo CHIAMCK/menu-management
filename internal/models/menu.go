@@ -10,10 +10,14 @@ const (
 )
 
 type Menu struct {
-	ID         int64      `json:"id" db:"id"`
+	ID         int64      `json:"id" db:"id" gorm:"primaryKey"`
 	MerchantID int64      `json:"merchant_id" db:"merchant_id"`
 	Name       string     `json:"name" db:"name"`
-	Status     MenuStatus `json:"status" db:"status"`
+	Status     MenuStatus `json:"status" db:"status" gorm:"type:menu_status"`
 	CreatedAt  time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt  time.Time  `json:"updated_at" db:"updated_at"`
+}
+
+func (Menu) TableName() string {
+	return "menus"
 }

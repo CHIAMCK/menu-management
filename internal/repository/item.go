@@ -2,45 +2,29 @@ package repository
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 
-	"github.com/lib/pq"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"menu-management/internal/models"
 )
 
 type ItemRepository struct {
-	db *sql.DB
+	db *gorm.DB
 }
 
-func NewItemRepository(db *sql.DB) *ItemRepository {
+func NewItemRepository(db *gorm.DB) *ItemRepository {
 	return &ItemRepository{db: db}
 }
 
 func (r *ItemRepository) FindItemByID(ctx context.Context, id int64) (models.Item, error) {
-	const query = `
-		SELECT id, merchant_id, name, price, status, availability, category_id, created_at, updated_at
-		FROM items
-		WHERE id = $1`
-
 	var item models.Item
-	err := r.db.QueryRowContext(ctx, query, id).Scan(
-		&item.ID,
-		&item.MerchantID,
-		&item.Name,
-		&item.Price,
-		&item.Status,
-		&item.Availability,
-		&item.CategoryID,
-		&item.CreatedAt,
-		&item.UpdatedAt,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return models.Item{}, ErrNotFound
-	}
+	err := r.db.WithContext(ctx).First(&item, id).Error
 	if err != nil {
+		if mapped := mapRecordNotFound(err); mapped != err {
+			return models.Item{}, mapped
+		}
 		return models.Item{}, fmt.Errorf("find item: %w", err)
 	}
 
@@ -52,64 +36,30 @@ func (r *ItemRepository) FindItemsForOrder(ctx context.Context, ids []int64) ([]
 		return []models.Item{}, nil
 	}
 
-	const query = `
-		SELECT id, merchant_id, name, price, status, availability
-		FROM items
-		WHERE id = ANY($1)`
-
-	rows, err := r.db.QueryContext(ctx, query, pq.Array(ids))
+	var items []models.Item
+	err := r.db.WithContext(ctx).
+		Select("id", "merchant_id", "name", "price", "status", "availability").
+		Where("id IN ?", ids).
+		Find(&items).Error
 	if err != nil {
 		return nil, fmt.Errorf("find items for order: %w", err)
-	}
-	defer rows.Close()
-
-	items := make([]models.Item, 0, len(ids))
-	for rows.Next() {
-		var item models.Item
-		if err := rows.Scan(
-			&item.ID,
-			&item.MerchantID,
-			&item.Name,
-			&item.Price,
-			&item.Status,
-			&item.Availability,
-		); err != nil {
-			return nil, fmt.Errorf("scan item: %w", err)
-		}
-		items = append(items, item)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate items: %w", err)
 	}
 
 	return items, nil
 }
 
 func (r *ItemRepository) UpdateItemAvailability(ctx context.Context, id int64, availability models.ItemAvailability) (models.Item, error) {
-	const query = `
-		UPDATE items
-		SET availability = $1
-		WHERE id = $2
-		RETURNING id, merchant_id, name, price, status, availability, category_id, created_at, updated_at`
-
 	var item models.Item
-	err := r.db.QueryRowContext(ctx, query, availability, id).Scan(
-		&item.ID,
-		&item.MerchantID,
-		&item.Name,
-		&item.Price,
-		&item.Status,
-		&item.Availability,
-		&item.CategoryID,
-		&item.CreatedAt,
-		&item.UpdatedAt,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return models.Item{}, ErrNotFound
+	result := r.db.WithContext(ctx).
+		Model(&item).
+		Clauses(clause.Returning{}).
+		Where("id = ?", id).
+		Update("availability", availability)
+	if result.Error != nil {
+		return models.Item{}, fmt.Errorf("update item availability: %w", result.Error)
 	}
-	if err != nil {
-		return models.Item{}, fmt.Errorf("update item availability: %w", err)
+	if result.RowsAffected == 0 {
+		return models.Item{}, ErrNotFound
 	}
 
 	return item, nil

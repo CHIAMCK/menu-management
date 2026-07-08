@@ -2,23 +2,45 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"errors"
+	"regexp"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/lib/pq"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 
 	"menu-management/internal/models"
 )
 
-func TestCreateOrder_Success(t *testing.T) {
-	db, mock, err := sqlmock.New()
+func newMockGormDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
+	t.Helper()
+
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	if err != nil {
 		t.Fatalf("sqlmock.New: %v", err)
 	}
-	defer db.Close()
+
+	gormDB, err := gorm.Open(postgres.New(postgres.Config{
+		Conn:                 sqlDB,
+		PreferSimpleProtocol: true,
+	}), &gorm.Config{
+		SkipDefaultTransaction: true,
+	})
+	if err != nil {
+		t.Fatalf("gorm.Open: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = sqlDB.Close()
+	})
+
+	return gormDB, mock
+}
+
+func TestCreateOrder_Success(t *testing.T) {
+	gormDB, mock := newMockGormDB(t)
 
 	input := CreateOrderInput{
 		UserID:      1,
@@ -31,20 +53,15 @@ func TestCreateOrder_Success(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(`INSERT INTO orders`).
-		WithArgs(input.UserID, input.MerchantID, models.OrderStatusReceived, input.TotalAmount).
+	mock.ExpectQuery(`INSERT INTO "orders"`).
+		WithArgs(input.UserID, input.MerchantID, models.OrderStatusReceived, input.TotalAmount, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(10))
-	mock.ExpectExec(`INSERT INTO order_items`).
-		WithArgs(
-			int64(10),
-			pq.Array([]int64{1, 4}),
-			pq.Array([]int32{2, 1}),
-			pq.Array([]float64{12.99, 5.99}),
-		).
-		WillReturnResult(sqlmock.NewResult(1, 2))
+	mock.ExpectQuery(`INSERT INTO "order_items"`).
+		WithArgs(int64(10), int64(1), 2, 12.99, sqlmock.AnyArg(), sqlmock.AnyArg(), int64(10), int64(4), 1, 5.99, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1).AddRow(2))
 	mock.ExpectCommit()
 
-	repo := NewOrderRepository(db)
+	repo := NewOrderRepository(gormDB)
 	orderID, err := repo.CreateOrder(context.Background(), input)
 	if err != nil {
 		t.Fatalf("CreateOrder: unexpected error: %v", err)
@@ -58,17 +75,13 @@ func TestCreateOrder_Success(t *testing.T) {
 }
 
 func TestCreateOrder_BeginTxFails(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatalf("sqlmock.New: %v", err)
-	}
-	defer db.Close()
+	gormDB, mock := newMockGormDB(t)
 
 	beginErr := errors.New("connection refused")
 	mock.ExpectBegin().WillReturnError(beginErr)
 
-	repo := NewOrderRepository(db)
-	_, err = repo.CreateOrder(context.Background(), CreateOrderInput{
+	repo := NewOrderRepository(gormDB)
+	_, err := repo.CreateOrder(context.Background(), CreateOrderInput{
 		UserID:      1,
 		MerchantID:  1,
 		TotalAmount: 12.99,
@@ -83,21 +96,17 @@ func TestCreateOrder_BeginTxFails(t *testing.T) {
 }
 
 func TestCreateOrder_InsertOrderFails(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatalf("sqlmock.New: %v", err)
-	}
-	defer db.Close()
+	gormDB, mock := newMockGormDB(t)
 
 	insertErr := errors.New("insert order failed")
 	mock.ExpectBegin()
-	mock.ExpectQuery(`INSERT INTO orders`).
-		WithArgs(int64(1), int64(1), models.OrderStatusReceived, 12.99).
+	mock.ExpectQuery(`INSERT INTO "orders"`).
+		WithArgs(int64(1), int64(1), models.OrderStatusReceived, 12.99, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(insertErr)
 	mock.ExpectRollback()
 
-	repo := NewOrderRepository(db)
-	_, err = repo.CreateOrder(context.Background(), CreateOrderInput{
+	repo := NewOrderRepository(gormDB)
+	_, err := repo.CreateOrder(context.Background(), CreateOrderInput{
 		UserID:      1,
 		MerchantID:  1,
 		TotalAmount: 12.99,
@@ -112,29 +121,19 @@ func TestCreateOrder_InsertOrderFails(t *testing.T) {
 }
 
 func TestCreateOrder_InsertOrderItemFails(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatalf("sqlmock.New: %v", err)
-	}
-	defer db.Close()
+	gormDB, mock := newMockGormDB(t)
 
 	insertItemErr := errors.New("insert order item failed")
 	mock.ExpectBegin()
-	mock.ExpectQuery(`INSERT INTO orders`).
-		WithArgs(int64(1), int64(1), models.OrderStatusReceived, 31.97).
+	mock.ExpectQuery(`INSERT INTO "orders"`).
+		WithArgs(int64(1), int64(1), models.OrderStatusReceived, 31.97, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(10))
-	mock.ExpectExec(`INSERT INTO order_items`).
-		WithArgs(
-			int64(10),
-			pq.Array([]int64{1, 4}),
-			pq.Array([]int32{2, 1}),
-			pq.Array([]float64{12.99, 5.99}),
-		).
+	mock.ExpectQuery(`INSERT INTO "order_items"`).
 		WillReturnError(insertItemErr)
 	mock.ExpectRollback()
 
-	repo := NewOrderRepository(db)
-	_, err = repo.CreateOrder(context.Background(), CreateOrderInput{
+	repo := NewOrderRepository(gormDB)
+	_, err := repo.CreateOrder(context.Background(), CreateOrderInput{
 		UserID:      1,
 		MerchantID:  1,
 		TotalAmount: 31.97,
@@ -152,29 +151,19 @@ func TestCreateOrder_InsertOrderItemFails(t *testing.T) {
 }
 
 func TestCreateOrder_CommitFails(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatalf("sqlmock.New: %v", err)
-	}
-	defer db.Close()
+	gormDB, mock := newMockGormDB(t)
 
 	commitErr := errors.New("commit failed")
 	mock.ExpectBegin()
-	mock.ExpectQuery(`INSERT INTO orders`).
-		WithArgs(int64(1), int64(1), models.OrderStatusReceived, 12.99).
+	mock.ExpectQuery(`INSERT INTO "orders"`).
+		WithArgs(int64(1), int64(1), models.OrderStatusReceived, 12.99, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(10))
-	mock.ExpectExec(`INSERT INTO order_items`).
-		WithArgs(
-			int64(10),
-			pq.Array([]int64{1}),
-			pq.Array([]int32{1}),
-			pq.Array([]float64{12.99}),
-		).
-		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery(`INSERT INTO "order_items"`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 	mock.ExpectCommit().WillReturnError(commitErr)
 
-	repo := NewOrderRepository(db)
-	_, err = repo.CreateOrder(context.Background(), CreateOrderInput{
+	repo := NewOrderRepository(gormDB)
+	_, err := repo.CreateOrder(context.Background(), CreateOrderInput{
 		UserID:      1,
 		MerchantID:  1,
 		TotalAmount: 12.99,
@@ -189,22 +178,18 @@ func TestCreateOrder_CommitFails(t *testing.T) {
 }
 
 func TestUpdateOrderStatus_Success(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatalf("sqlmock.New: %v", err)
-	}
-	defer db.Close()
+	gormDB, mock := newMockGormDB(t)
 
 	createdAt := time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
 	updatedAt := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
 
-	mock.ExpectQuery(`UPDATE orders`).
-		WithArgs(int64(2), models.OrderStatusPreparing).
+	mock.ExpectQuery(regexp.QuoteMeta(`UPDATE "orders" SET "status"=$1,"updated_at"=NOW() WHERE id = $2 RETURNING *`)).
+		WithArgs(models.OrderStatusPreparing, int64(2)).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "user_id", "merchant_id", "status", "total_amount", "created_at", "updated_at",
 		}).AddRow(2, 2, 1, models.OrderStatusPreparing, 14.99, createdAt, updatedAt))
 
-	repo := NewOrderRepository(db)
+	repo := NewOrderRepository(gormDB)
 	order, err := repo.UpdateOrderStatus(context.Background(), 2, models.OrderStatusPreparing)
 	if err != nil {
 		t.Fatalf("UpdateOrderStatus: unexpected error: %v", err)
@@ -225,18 +210,16 @@ func TestUpdateOrderStatus_Success(t *testing.T) {
 }
 
 func TestUpdateOrderStatus_NotFound(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatalf("sqlmock.New: %v", err)
-	}
-	defer db.Close()
+	gormDB, mock := newMockGormDB(t)
 
-	mock.ExpectQuery(`UPDATE orders`).
-		WithArgs(int64(99), models.OrderStatusPreparing).
-		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(regexp.QuoteMeta(`UPDATE "orders" SET "status"=$1,"updated_at"=NOW() WHERE id = $2 RETURNING *`)).
+		WithArgs(models.OrderStatusPreparing, int64(99)).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "user_id", "merchant_id", "status", "total_amount", "created_at", "updated_at",
+		}))
 
-	repo := NewOrderRepository(db)
-	_, err = repo.UpdateOrderStatus(context.Background(), 99, models.OrderStatusPreparing)
+	repo := NewOrderRepository(gormDB)
+	_, err := repo.UpdateOrderStatus(context.Background(), 99, models.OrderStatusPreparing)
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("UpdateOrderStatus: want ErrNotFound, got %v", err)
 	}
@@ -246,19 +229,15 @@ func TestUpdateOrderStatus_NotFound(t *testing.T) {
 }
 
 func TestUpdateOrderStatus_QueryError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatalf("sqlmock.New: %v", err)
-	}
-	defer db.Close()
+	gormDB, mock := newMockGormDB(t)
 
 	queryErr := errors.New("connection refused")
-	mock.ExpectQuery(`UPDATE orders`).
-		WithArgs(int64(1), models.OrderStatusReady).
+	mock.ExpectQuery(regexp.QuoteMeta(`UPDATE "orders" SET "status"=$1,"updated_at"=NOW() WHERE id = $2 RETURNING *`)).
+		WithArgs(models.OrderStatusReady, int64(1)).
 		WillReturnError(queryErr)
 
-	repo := NewOrderRepository(db)
-	_, err = repo.UpdateOrderStatus(context.Background(), 1, models.OrderStatusReady)
+	repo := NewOrderRepository(gormDB)
+	_, err := repo.UpdateOrderStatus(context.Background(), 1, models.OrderStatusReady)
 	if err == nil {
 		t.Fatal("UpdateOrderStatus: expected error, got nil")
 	}

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"gorm.io/gorm"
 
 	"menu-management/internal/db"
 	"menu-management/internal/lock"
@@ -50,17 +50,17 @@ func loadConfig() config {
 	}
 }
 
-func setupDatabase(ctx context.Context, databaseURL string) (*sql.DB, error) {
+func setupDatabase(ctx context.Context, databaseURL string) (*gorm.DB, error) {
 	if err := db.RunMigrations(databaseURL); err != nil {
 		return nil, fmt.Errorf("migrations failed: %w", err)
 	}
 
-	sqlDB, err := db.Connect(ctx)
+	gormDB, err := db.Connect(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("database connection failed: %w", err)
 	}
 
-	return sqlDB, nil
+	return gormDB, nil
 }
 
 func setupMessaging(ctx context.Context) (*messagingComponents, error) {
@@ -98,7 +98,11 @@ func runServer(ctx context.Context, port string, handler http.Handler) error {
 func main() {
 	cfg := loadConfig()
 
-	sqlDB, err := setupDatabase(context.Background(), cfg.databaseURL)
+	gormDB, err := setupDatabase(context.Background(), cfg.databaseURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	sqlDB, err := gormDB.DB()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -119,7 +123,7 @@ func main() {
 	msg.components.Consumer.RunInBackground(ctx, logger, &workerWG)
 
 	userLocker := lock.NewInMemoryUserLocker(5 * time.Second)
-	router := routes.Setup(sqlDB, msg.components.Publisher, userLocker)
+	router := routes.Setup(gormDB, msg.components.Publisher, userLocker)
 	if err := runServer(ctx, cfg.port, router); err != nil {
 		log.Fatal(err)
 	}

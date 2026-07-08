@@ -133,6 +133,8 @@ I will implement API versioning. Add a new endpoint, `GET /v2/menu` with the new
 
 Name one thing you would change or add if you had another two hours. Be specific.
 
+I would add JWT authentication and authorization. Now all endpoints are public and user_id is client-supplied in POST /v1/orders, so anyone can place orders as another user or call merchant endpoints. I would introduce a Gin middleware that validates Bearer tokens and attaches user_id, merchant_id to the request context
+
 ### 4. Production gap
 
 What is the most significant thing missing from this service that would concern you before shipping it to real users?

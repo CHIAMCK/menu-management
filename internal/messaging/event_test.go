@@ -12,15 +12,15 @@ func TestFromOrderDetail(t *testing.T) {
 	createdAt := time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
 
 	order := dto.OrderDetailResponse{
-		OrderID:     42,
+		ID:          42,
 		UserID:      1,
 		MerchantID:  2,
 		Status:      "RECEIVED",
 		TotalAmount: 31.97,
 		CreatedAt:   createdAt,
 		Items: []dto.OrderItemResponse{
-			{ItemID: 1, Name: "Margherita Pizza", Quantity: 2, UnitPrice: 12.99},
-			{ItemID: 4, Name: "Garlic Bread", Quantity: 1, UnitPrice: 5.99},
+			{ID: 1, Name: "Margherita Pizza", Quantity: 2, UnitPrice: 12.99},
+			{ID: 4, Name: "Garlic Bread", Quantity: 1, UnitPrice: 5.99},
 		},
 	}
 

@@ -27,7 +27,7 @@ func FromOrderDetail(order dto.OrderDetailResponse) OrderPlacedEvent {
 	items := make([]OrderPlacedItem, 0, len(order.Items))
 	for _, item := range order.Items {
 		items = append(items, OrderPlacedItem{
-			ItemID:    item.ItemID,
+			ItemID:    item.ID,
 			Name:      item.Name,
 			Quantity:  item.Quantity,
 			UnitPrice: item.UnitPrice,
@@ -35,7 +35,7 @@ func FromOrderDetail(order dto.OrderDetailResponse) OrderPlacedEvent {
 	}
 
 	return OrderPlacedEvent{
-		OrderID:     order.OrderID,
+		OrderID:     order.ID,
 		UserID:      order.UserID,
 		MerchantID:  order.MerchantID,
 		Status:      order.Status,

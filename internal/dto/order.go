@@ -14,7 +14,7 @@ type CreateOrderItemRequest struct {
 }
 
 type OrderDetailResponse struct {
-	OrderID     int64               `json:"order_id"`
+	ID          int64               `json:"id"`
 	UserID      int64               `json:"user_id"`
 	MerchantID  int64               `json:"merchant_id"`
 	Status      string              `json:"status"`
@@ -29,7 +29,7 @@ type UpdateOrderStatusRequest struct {
 }
 
 type OrderItemResponse struct {
-	ItemID    int64   `json:"item_id"`
+	ID        int64   `json:"id"`
 	Name      string  `json:"name"`
 	Quantity  int     `json:"quantity"`
 	UnitPrice float64 `json:"unit_price"`

@@ -245,7 +245,7 @@ func TestGetOrder_Success(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	if got.OrderID != 1 || got.Status != "COMPLETED" || got.TotalAmount != 31.97 {
+	if got.ID != 1 || got.Status != "COMPLETED" || got.TotalAmount != 31.97 {
 		t.Fatalf("unexpected order: %+v", got)
 	}
 	if len(got.Items) != 1 || got.Items[0].Name != "Margherita Pizza" {
@@ -277,7 +277,7 @@ func TestCreateOrder_Success(t *testing.T) {
 	}
 
 	wantTotal := 12.99*2 + 5.99
-	if got.OrderID != 99 || got.Status != "RECEIVED" || got.TotalAmount != wantTotal {
+	if got.ID != 99 || got.Status != "RECEIVED" || got.TotalAmount != wantTotal {
 		t.Fatalf("unexpected order: %+v", got)
 	}
 }
@@ -518,7 +518,7 @@ func TestUpdateOrderStatus_Success(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	if got.OrderID != 2 || got.Status != "PREPARING" {
+	if got.ID != 2 || got.Status != "PREPARING" {
 		t.Fatalf("unexpected order: %+v", got)
 	}
 }

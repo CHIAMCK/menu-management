@@ -1,8 +1,8 @@
 package dto
 
 type MenuResponse struct {
-	MenuID     int64              `json:"menu_id"`
-	MenuName   string             `json:"menu_name"`
+	ID         int64              `json:"id"`
+	Name       string             `json:"name"`
 	MerchantID int64              `json:"merchant_id"`
 	Categories []CategoryResponse `json:"categories"`
 }

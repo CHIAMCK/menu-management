@@ -220,7 +220,7 @@ func TestGetOrderByID_Success(t *testing.T) {
 		t.Fatalf("FindOrderItemsByOrderID called with orderID %d, want 1", mockRepo.itemsForID)
 	}
 
-	if got.OrderID != 1 || got.UserID != 1 || got.MerchantID != 1 {
+	if got.ID != 1 || got.UserID != 1 || got.MerchantID != 1 {
 		t.Fatalf("unexpected order fields: %+v", got)
 	}
 	if got.Status != "COMPLETED" {
@@ -285,8 +285,8 @@ func TestCreateOrder_PublishesOrderPlacedEvent(t *testing.T) {
 		t.Fatalf("CreateOrder: unexpected error: %v", err)
 	}
 
-	if publisher.event.OrderID != got.OrderID {
-		t.Fatalf("published OrderID = %d, want %d", publisher.event.OrderID, got.OrderID)
+	if publisher.event.OrderID != got.ID {
+		t.Fatalf("published OrderID = %d, want %d", publisher.event.OrderID, got.ID)
 	}
 	if publisher.event.UserID != 1 || publisher.event.MerchantID != 1 {
 		t.Fatalf("unexpected published order fields: %+v", publisher.event)
@@ -331,7 +331,7 @@ func TestCreateOrder_Success(t *testing.T) {
 	if orderRepo.itemsForID != 0 {
 		t.Fatalf("FindOrderItemsByOrderID should not be called after create, got itemsForID %d", orderRepo.itemsForID)
 	}
-	if got.OrderID != 99 || got.Status != "RECEIVED" || got.TotalAmount != wantTotal {
+	if got.ID != 99 || got.Status != "RECEIVED" || got.TotalAmount != wantTotal {
 		t.Fatalf("unexpected order: %+v", got)
 	}
 	if len(got.Items) != 2 {

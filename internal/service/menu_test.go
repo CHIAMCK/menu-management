@@ -120,7 +120,7 @@ func TestGetActiveMenu_Success(t *testing.T) {
 		t.Fatalf("GetActiveMenu: unexpected error: %v", err)
 	}
 
-	if got.MenuID != 1 || got.MenuName != "Lunch Menu" || got.MerchantID != 1 {
+	if got.ID != 1 || got.Name != "Lunch Menu" || got.MerchantID != 1 {
 		t.Fatalf("unexpected menu fields: %+v", got)
 	}
 	if len(got.Categories) != 2 {

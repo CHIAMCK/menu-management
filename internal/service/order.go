@@ -131,7 +131,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, req dto.CreateOrderReque
 	}, createdItems)
 
 	if err := s.publisher.PublishOrderPlaced(ctx, messaging.FromOrderDetail(order)); err != nil {
-		slog.Warn("failed to publish order.placed event", "order_id", order.OrderID, "error", err)
+		slog.Warn("failed to publish order.placed event", "order_id", order.ID, "error", err)
 	}
 
 	return order, nil
@@ -238,7 +238,7 @@ func toOrderDetailResponse(order models.Order, items []repository.OrderItemWithI
 	itemResponses := make([]dto.OrderItemResponse, 0, len(items))
 	for _, item := range items {
 		itemResponses = append(itemResponses, dto.OrderItemResponse{
-			ItemID:    item.ItemID,
+			ID:        item.ItemID,
 			Name:      item.Name,
 			Quantity:  item.Quantity,
 			UnitPrice: item.UnitPrice,
@@ -246,7 +246,7 @@ func toOrderDetailResponse(order models.Order, items []repository.OrderItemWithI
 	}
 
 	return dto.OrderDetailResponse{
-		OrderID:     order.ID,
+		ID:          order.ID,
 		UserID:      order.UserID,
 		MerchantID:  order.MerchantID,
 		Status:      string(order.Status),

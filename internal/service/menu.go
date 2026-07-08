@@ -82,8 +82,8 @@ func toMenuResponse(menu models.Menu, categories []models.Category, items []mode
 	}
 
 	return dto.MenuResponse{
-		MenuID:     menu.ID,
-		MenuName:   menu.Name,
+		ID:         menu.ID,
+		Name:       menu.Name,
 		MerchantID: menu.MerchantID,
 		Categories: categoryResponses,
 	}

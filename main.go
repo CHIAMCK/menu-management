@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	"github.com/redis/go-redis/v9"
 
 	"menu-management/internal/db"
 	"menu-management/internal/lock"
@@ -73,26 +72,6 @@ func setupMessaging(ctx context.Context) (*messagingComponents, error) {
 	return &messagingComponents{components: components}, nil
 }
 
-func setupRedis(ctx context.Context) (*redis.Client, error) {
-	redisURL := os.Getenv("REDIS_URL")
-	if redisURL == "" {
-		redisURL = "redis://localhost:6379/0"
-	}
-
-	opts, err := redis.ParseURL(redisURL)
-	if err != nil {
-		return nil, fmt.Errorf("parse redis url: %w", err)
-	}
-
-	client := redis.NewClient(opts)
-	if err := client.Ping(ctx).Err(); err != nil {
-		_ = client.Close()
-		return nil, fmt.Errorf("redis ping: %w", err)
-	}
-
-	return client, nil
-}
-
 func runServer(ctx context.Context, port string, handler http.Handler) error {
 	srv := &http.Server{
 		Addr:    ":" + port,
@@ -134,18 +113,12 @@ func main() {
 	}
 	defer msg.components.Close()
 
-	redisClient, err := setupRedis(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer redisClient.Close()
-
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	var workerWG sync.WaitGroup
 	msg.components.Consumer.RunInBackground(ctx, logger, &workerWG)
 
-	userLocker := lock.NewRedisUserLocker(redisClient, 5*time.Second)
+	userLocker := lock.NewInMemoryUserLocker(5 * time.Second)
 	router := routes.Setup(sqlDB, msg.components.Publisher, userLocker)
 	if err := runServer(ctx, cfg.port, router); err != nil {
 		log.Fatal(err)

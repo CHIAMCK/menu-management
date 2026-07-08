@@ -7,73 +7,54 @@ A Go app using [Gin](https://github.com/gin-gonic/gin) and PostgreSQL for menu m
 - Go 1.21+
 - PostgreSQL 14+
 
-## Quick Start (Docker)
+## Quick Start
+
+### Docker
 
 ```bash
 docker compose up --build
 ```
 
-- App: http://localhost:8080
-- PostgreSQL: `localhost:5432` (user `postgres`, password `postgres`, db `menu_management`)
-- RabbitMQ: `localhost:5672` (user `guest`, password `guest`)
-- RabbitMQ management UI: http://localhost:15672 (user `guest`, password `guest`)
-- Order worker: runs as a background goroutine inside the app process and logs structured kitchen-display notifications
+| Service | Address |
+|---------|---------|
+| API | http://localhost:8080 |
+| PostgreSQL | `localhost:5432` |
+| RabbitMQ | `localhost:5672` |
+| RabbitMQ UI | http://localhost:15672 |
+
+Verify with `curl http://localhost:8080/`. See [Endpoints](#endpoints) for more examples. After placing an order, check kitchen-display logs with `docker compose logs app`.
 
 ```bash
-curl http://localhost:8080/
+docker compose down      # stop containers
+docker compose down -v   # stop and remove database volume
 ```
 
-See [Endpoints](#endpoints) for curl examples for every API route. After placing an order, inspect app logs for the kitchen-display notification:
+### Local
+
+Start dependencies (Docker examples):
 
 ```bash
-docker compose logs app
-```
-
-Stop and remove containers:
-
-```bash
-docker compose down
-```
-
-Remove the database volume as well:
-
-```bash
-docker compose down -v
-```
-
-## Quick Start (Local)
-
-**1. Start PostgreSQL** (example with Docker):
-
-```bash
+# PostgreSQL
 docker run --name menu-pg \
-  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_PASSWORD \
   -e POSTGRES_DB=menu_management \
-  -p 5432:5432 \
-  -d postgres:16
-```
+  -p 5432:5432 -d postgres:16
 
-**2. Start RabbitMQ** (example with Docker):
-
-```bash
+# RabbitMQ
 docker run --name menu-rabbitmq \
-  -p 5672:5672 \
-  -p 15672:15672 \
+  -p 5672:5672 -p 15672:15672 \
   -d rabbitmq:3-management-alpine
 ```
 
-**3. Run the app:**
+Run the app:
 
 ```bash
-export DATABASE_URL="postgres://postgres:postgres@localhost:5432/menu_management?sslmode=disable"
-export RABBITMQ_URL="amqp://guest:guest@localhost:5672/"
-export ORDER_QUEUE_NAME="order.placed"
-export MERCHANT_ID=1
-go mod tidy
-go run .
+cp .env.example .env
+# Set DATABASE_URL and RABBITMQ_URL in .env
+go mod tidy && go run .
 ```
 
-The server starts on `http://localhost:8080` (override with `PORT` env var). Set `MERCHANT_ID` to choose which merchant's active menu is served. When a new order is placed, the API publishes an `order.placed` event to RabbitMQ; a background goroutine in the same process consumes it and logs a structured summary.
+Server listens on http://localhost:8080 (`PORT` to override). `MERCHANT_ID` selects which merchant's menu is served.
 
 ## Order Events
 
@@ -137,6 +118,10 @@ go test -v ./...
 ### 1. API contract decisions
 
 What was one non-obvious design decision you made in the API surface — a naming choice, a response shape, a status code — and why did you make it?
+
+One non-obvious API contract decision I made was returning HTTP 409 Conflict when detecting duplicate order submissions.
+
+To prevent duplicate orders caused by users tapping the "Place Order" button multiple times, I temporarily lock order creation for the same user for a short period. If another create order request arrives while an order is already being processed, the API returns 409 Conflict
 
 ### 2. Versioning
 
